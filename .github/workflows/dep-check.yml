@@ -2,7 +2,7 @@
 #
 #   jobs:
 #     dep-check:
-#       uses: usetheokit/.github/.github/workflows/dep-check.yml@workspace
+#       uses: usetheokit/shared-workflows/.github/workflows/dep-check.yml@v1
 #
 # Only the checks that are deterministic and offline block a push. The check that
 # actually catches a range going stale — declared range vs the sibling's published

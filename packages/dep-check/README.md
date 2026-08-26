@@ -105,23 +105,21 @@ workflow. The expensive legs are off for an ordinary push and on for the release
 ```yaml
 jobs:
   dep-check:
-    uses: usetheokit/.github/.github/workflows/dep-check.yml@workspace
+    uses: usetheokit/shared-workflows/.github/workflows/dep-check.yml@v1
     with:
       run-install-check: ${{ github.base_ref == 'main' }}
       run-floor-check: ${{ github.base_ref == 'main' }}
       run-impact-check: ${{ github.base_ref == 'main' }}
 ```
 
-`@workspace`, not `@main`: that is the only branch this repository has, and its default. The ref was
-written `@main` first, on the assumption that every repository in the organisation follows
-workspace → develop → main. This one does not — and a `uses:` naming a branch that does not exist
-fails at workflow RESOLUTION, before any step runs, with an error about the workflow rather than
-about dependencies.
+`@v1` is a moving major and the tool inside it is not: the YAML may change under callers so one
+correction reaches everyone, while `@theokit/dep-check` is pinned to an exact version so a change in
+what the detector detects is a version bump somebody reviewed.
 
 What makes it a gate is marking **Dependency Gate / dependency gate** required in branch protection.
 A job that runs and reports but is not required blocks nothing.
 
-The organisation-wide sweep is `dep-check-report.yml` in this repository — one scheduled workflow,
+The organisation-wide sweep is `dep-check-report.yml` in usetheokit/shared-workflows — one scheduled workflow,
 not one per repo, because the sweep reads the registry rather than a checkout. It maintains a single
 standing issue: rewritten while a broken contract exists, closed automatically when none does.
 
@@ -130,13 +128,14 @@ standing issue: rewritten while a broken contract exists, closed automatically w
 It does not open pull requests to move a range forward. Detecting and repairing are different jobs,
 and there is a mature tool for the second one.
 
-That is Renovate, configured through the shared preset in `default.json` at the root of this
-repository. A repository opts in with three lines:
+That is Renovate, configured through the shared preset in
+[usetheokit/renovate-config](https://github.com/usetheokit/renovate-config) — the name Renovate
+auto-detects, so a repository created next month inherits the policy without anyone wiring it up. A repository opts in with three lines:
 
 ```json
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>usetheokit/.github"]
+  "extends": ["github>usetheokit/renovate-config"]
 }
 ```
 
