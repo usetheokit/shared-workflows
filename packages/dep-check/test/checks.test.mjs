@@ -1,0 +1,186 @@
+import { describe, expect, it } from "vitest";
+import {
+  ceilingDrift,
+  consumersLeftBehind,
+  duplicateSiblingCopies,
+  installedDrift,
+  isSibling,
+  rangeFloor,
+} from "../src/checks.mjs";
+
+describe("isSibling", () => {
+  it("test_recognises_the_scoped_packages_and_the_bare_framework", () => {
+    expect(isSibling("@theokit/sdk")).toBe(true);
+    expect(isSibling("theokit")).toBe(true);
+  });
+
+  it("test_does_not_claim_unrelated_packages_that_merely_start_with_theo", () => {
+    // `theokit-studio` is a repository name, never a package name. Matching on a
+    // prefix rather than the exact scope would drag third-party packages in.
+    expect(isSibling("theokit-studio")).toBe(false);
+    expect(isSibling("@theocode/cli")).toBe(false);
+    expect(isSibling("vite")).toBe(false);
+  });
+});
+
+describe("ceilingDrift — check C: does the declared range still admit the published latest?", () => {
+  // The three historical states this gate exists for. If it cannot flag these, it is a
+  // probe that cannot detect the condition it screens for, and green means nothing.
+  it("test_flags_the_di_agent_range_that_shipped_broken", () => {
+    expect(ceilingDrift({ range: "^1.3.0", latest: "4.57.0" })).toMatchObject({ majorsBehind: 3 });
+  });
+
+  it("test_flags_the_studio_range_that_shipped_a_second_runtime_copy", () => {
+    expect(ceilingDrift({ range: "^7.6.0", latest: "11.1.0" })).toMatchObject({ majorsBehind: 4 });
+  });
+
+  it("test_flags_the_studio_range_that_0_2_0_already_corrected_by_hand_once", () => {
+    // The whole argument for automating this: the same range was fixed manually in
+    // 0.2.0 and went stale again. A gate that only knows about today's drift would
+    // have let the first one through too.
+    expect(ceilingDrift({ range: "^0.39.0", latest: "11.1.0" })).toBeTruthy();
+  });
+
+  it("test_is_silent_on_the_corrected_ranges", () => {
+    expect(ceilingDrift({ range: ">=4.0.1 <5", latest: "4.57.0" })).toBeNull();
+    expect(ceilingDrift({ range: ">=11.0.0 <12", latest: "11.1.0" })).toBeNull();
+  });
+
+  it("test_counts_a_zero_x_minor_as_a_major_because_semver_says_it_is_one", () => {
+    // In 0.x the caret pins the minor, so ^0.26.1 does not admit 0.27.1. Reporting
+    // that as "0 majors behind" would read as harmless when it is a hard exclusion.
+    const drift = ceilingDrift({ range: "^0.26.1", latest: "0.27.1" });
+    expect(drift).toBeTruthy();
+    expect(drift.majorsBehind).toBe(1);
+  });
+
+  it("test_ignores_workspace_protocol_ranges_which_no_registry_can_answer", () => {
+    expect(ceilingDrift({ range: "workspace:^", latest: "4.57.0" })).toBeNull();
+    expect(ceilingDrift({ range: "workspace:*", latest: "4.57.0" })).toBeNull();
+  });
+
+  it("test_does_not_flag_a_prerelease_latest_against_a_stable_range", () => {
+    // A `next` tag reaching `latest` briefly is not a reason to open a pull request
+    // against every consumer in the organisation.
+    expect(ceilingDrift({ range: ">=4.0.1 <5", latest: "5.0.0-next.1" })).toBeNull();
+  });
+});
+
+describe("installedDrift — check A: does the range admit what the lockfile actually installs?", () => {
+  it("test_flags_a_range_that_excludes_the_version_the_suite_runs_against", () => {
+    // The offline half. It cannot see the two historical bugs — both were internally
+    // coherent — but it catches the inverse mistake: tightening a range under a
+    // lockfile that still resolves something else.
+    expect(installedDrift({ range: ">=11.0.0 <12", installed: "7.6.0" })).toBeTruthy();
+  });
+
+  it("test_is_silent_when_the_installed_version_satisfies_the_range", () => {
+    expect(installedDrift({ range: ">=4.0.1 <5", installed: "4.57.0" })).toBeNull();
+  });
+
+  it("test_is_silent_when_nothing_is_installed_because_absence_is_not_drift", () => {
+    // An optional peer that the repository does not install is not a defect. Saying
+    // otherwise would make the gate fire on every consumer of an optional peer.
+    expect(installedDrift({ range: ">=4.0.1 <5", installed: null })).toBeNull();
+  });
+});
+
+describe("rangeFloor — check B: which published version is the bottom of the range?", () => {
+  const published = ["4.0.1", "4.0.2", "4.1.0", "4.19.3", "4.57.0", "5.0.0-next.1"];
+
+  it("test_returns_the_lowest_published_version_the_range_admits", () => {
+    expect(rangeFloor(">=4.0.1 <5", published)).toBe("4.0.1");
+    expect(rangeFloor(">=4.1.0 <5", published)).toBe("4.1.0");
+  });
+
+  it("test_returns_the_lowest_real_version_not_the_theoretical_one", () => {
+    // `>=4.0.0` admits 4.0.0, which was never published. Testing against a version
+    // that does not exist fails on resolution and looks like a version failure.
+    expect(rangeFloor(">=4.0.0 <5", published)).toBe("4.0.1");
+  });
+
+  it("test_skips_prereleases_so_the_floor_leg_does_not_run_on_a_next_tag", () => {
+    expect(rangeFloor(">=5.0.0", published)).toBeNull();
+  });
+});
+
+describe("consumersLeftBehind — the reverse check, run by the publisher before a major", () => {
+  const consumers = [
+    { pkg: "@theokit/studio", repo: "theokit-studio", range: ">=11.0.0 <12" },
+    { pkg: "theokit", repo: "theokit", range: "^11.1.0" },
+    { pkg: "@theocode/agent", repo: "usetheo-labs", range: ">=11.0.0 <13" },
+  ];
+
+  it("test_names_who_breaks_when_the_next_major_is_published", () => {
+    const left = consumersLeftBehind({ consumers, nextVersion: "12.0.0" });
+    expect(left.map((c) => c.pkg).sort()).toEqual(["@theokit/studio", "theokit"]);
+  });
+
+  it("test_is_empty_for_a_patch_nobody_excludes", () => {
+    expect(consumersLeftBehind({ consumers, nextVersion: "11.1.1" })).toEqual([]);
+  });
+
+  it("test_labels_a_consumer_that_already_requires_something_newer_as_ahead_not_behind", () => {
+    // Seen for real: `theokit@0.56.0` shipped requiring `@theokit/agents: ^12.0.0`
+    // while the checkout still held 11.1.0. That consumer is not stranded by the
+    // release — the checkout is behind the registry. Calling both "left behind" would
+    // put a finding in the publisher's release with nothing for them to do about it.
+    const ahead = [{ pkg: "theokit", repo: "theokit", range: "^12.0.0" }];
+    const found = consumersLeftBehind({ consumers: ahead, nextVersion: "11.1.0" });
+    expect(found).toHaveLength(1);
+    expect(found[0].direction).toBe("ahead");
+  });
+
+  it("test_labels_a_genuinely_stranded_consumer_as_behind", () => {
+    const stranded = [{ pkg: "@theokit/studio", repo: "theokit-studio", range: "^7.6.0" }];
+    expect(consumersLeftBehind({ consumers: stranded, nextVersion: "12.0.0" })[0].direction).toBe("behind");
+  });
+
+  it("test_can_be_asked_for_the_stranded_ones_only", () => {
+    const mixed = [
+      { pkg: "old", range: "^7.6.0" },
+      { pkg: "new", range: "^12.0.0" },
+    ];
+    const found = consumersLeftBehind({ consumers: mixed, nextVersion: "11.1.0", direction: "behind" });
+    expect(found.map((c) => c.pkg)).toEqual(["old"]);
+  });
+});
+
+describe("duplicateSiblingCopies — check D: one runtime, or two?", () => {
+  it("test_finds_the_second_copy_that_npm_installed_without_complaining", () => {
+    // The studio defect exactly: `npm i theokit @theokit/studio` succeeded and put
+    // two runtimes in the tree. A gate that only asks "did the install fail?" is
+    // green here, which is why this check asks a different question.
+    const tree = {
+      dependencies: {
+        "@theokit/studio": { version: "0.2.0", dependencies: { "@theokit/agents": { version: "7.6.0" } } },
+        theokit: { version: "0.55.0", dependencies: { "@theokit/agents": { version: "11.1.0" } } },
+      },
+    };
+    const dupes = duplicateSiblingCopies(tree);
+    expect(dupes).toHaveLength(1);
+    expect(dupes[0]).toMatchObject({ dep: "@theokit/agents", versions: ["7.6.0", "11.1.0"] });
+  });
+
+  it("test_is_silent_on_a_tree_with_one_copy_of_each_sibling", () => {
+    const tree = {
+      dependencies: {
+        theokit: { version: "0.55.0", dependencies: { "@theokit/agents": { version: "11.1.0" } } },
+        "@theokit/studio": { version: "0.3.0" },
+      },
+    };
+    expect(duplicateSiblingCopies(tree)).toEqual([]);
+  });
+
+  it("test_ignores_duplicate_copies_of_packages_outside_the_ecosystem", () => {
+    // Two copies of `semver` in a tree is ordinary npm. This gate is about the
+    // ecosystem's own runtime being loaded twice, not about tree hygiene at large.
+    const tree = {
+      dependencies: {
+        a: { version: "1.0.0", dependencies: { semver: { version: "6.0.0" } } },
+        b: { version: "1.0.0", dependencies: { semver: { version: "7.0.0" } } },
+      },
+    };
+    expect(duplicateSiblingCopies(tree)).toEqual([]);
+  });
+});

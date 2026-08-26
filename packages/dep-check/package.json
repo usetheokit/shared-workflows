@@ -1,0 +1,47 @@
+{
+  "name": "@theokit/dep-check",
+  "version": "0.1.0",
+  "description": "The ecosystem dependency gate: does a package's declared range still describe the sibling it ships against? Four checks, kept apart by what they need to answer and therefore by whether they may fail a build.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "bin": {
+    "dep-check": "./index.mjs"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "semver": "^7.7.2"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/usetheokit/shared-workflows/tree/main/packages/dep-check#readme",
+  "bugs": "https://github.com/usetheokit/shared-workflows/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/usetheokit/shared-workflows.git",
+    "directory": "packages/dep-check"
+  },
+  "keywords": [
+    "dependencies",
+    "peerdependencies",
+    "semver",
+    "monorepo",
+    "ci",
+    "theokit"
+  ],
+  "files": [
+    "index.mjs",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

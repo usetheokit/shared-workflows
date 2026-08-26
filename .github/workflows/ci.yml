@@ -1,0 +1,72 @@
+# Tests the tooling this repository ships to every other one.
+#
+# `dep-check` is a detector, and a detector that cannot detect is worse than none: it reports
+# green over the condition it was built to find, and the green is believed. Its suite pins the
+# three peer ranges that actually shipped broken, plus the npm-versus-pnpm case that made the
+# gate run `pnpm test` on an npm repository and call the failure a pass.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A cancelled run on main leaves the commit with no verdict, which reads the same as a
+  # passing one. Only supersede elsewhere.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: dep-check suite (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor of `engines.node` and the current release. A tool every repository runs
+        # has to work on the oldest Node any of them pins.
+        node: ['22.12', '22']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install
+        working-directory: packages/dep-check
+        run: npm ci --no-audit --no-fund
+
+      - name: Test
+        working-directory: packages/dep-check
+        run: npm test
+
+      - name: The published tarball must carry a working CLI # zizmor: ignore[adhoc-packages]
+        # `files[]` decides what ships, and it is the one part of the manifest no unit test
+        # touches. Installing the pack output into an empty project is the only way to find
+        # out that a src/ directory was left out — after which the CLI is a stack trace.
+        working-directory: packages/dep-check
+        run: |
+          set -euo pipefail
+          tarball="$(npm pack --silent)"
+          scratch="$(mktemp -d)"
+          cp "$tarball" "$scratch/"
+          cd "$scratch"
+          node -e 'require("fs").writeFileSync("package.json",JSON.stringify({name:"scratch",private:true,version:"1.0.0"}))'
+          # The "package" is the tarball this step just packed from this repository. No lockfile
+          # could cover it, and covering it would defeat the check: the point is to install
+          # exactly what a consumer installs — which is why the suppression sits on the step
+          # above rather than here. zizmor attributes a finding to the STEP, so a comment
+          # inside the shell block is read by people and by nothing else.
+          npm install --silent "./$tarball"
+          npx --no-install dep-check --help | grep -q "manifest"
+          npx --no-install dep-check --help | grep -q "run-command"

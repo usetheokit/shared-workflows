@@ -1,0 +1,248 @@
+# Reusable dependency gate for the Theokit ecosystem — the blocking half.
+#
+#   jobs:
+#     dep-check:
+#       uses: usetheokit/.github/.github/workflows/dep-check.yml@workspace
+#
+# Only the checks that are deterministic and offline block a push. The check that
+# actually catches a range going stale — declared range vs the sibling's published
+# `latest` — deliberately does NOT live here: it needs the registry, and a gate that
+# turns red the day someone else cuts a major teaches a team to ignore red. That one
+# runs once a day, organisation-wide, in dep-check-report.yml, and opens an issue.
+#
+# Every action is pinned to a commit SHA. A tag is a mutable pointer: whoever controls
+# the action repository can move `v4` onto new code, and every workflow trusting that
+# tag runs it on the next push with whatever secrets the job holds.
+name: Dependency Gate
+
+on:
+  workflow_call:
+    inputs:
+      pnpm-version:
+        description: 'pnpm version pinned through corepack. Must match the caller packageManager field.'
+        type: string
+        default: '10.34.1'
+      node-version:
+        type: string
+        default: '22.12'
+      dep-check-version:
+        description: |
+          The @theokit/dep-check version this gate runs. Pinned by default and on purpose: the
+          workflow is referenced by a moving ref so a policy change reaches every caller, but the
+          TOOL is a semver artifact, so a behaviour change is a version bump somebody reviewed.
+          The pin lives here rather than in eleven callers.
+        type: string
+        default: '0.1.0'
+      run-floor-check:
+        description: |
+          Also run the suite against the BOTTOM of every declared sibling range, not only
+          the top. A wide range is a promise about an interval, and the devDependency only
+          ever exercises one end of it. Off by default because it costs a second install.
+        type: boolean
+        default: false
+      test-command:
+        description: |
+          The suite to run for the floor leg. Leave empty to derive it from the repository's
+          lockfile — the default used to be the literal `pnpm test`, which produced
+          `pnpm: command not found` (exit 127) on the one npm repository in the ecosystem,
+          in a job whose name promised it had run the suite. Set it only when the script is
+          not `test`.
+        type: string
+        default: ''
+      run-install-check:
+        description: |
+          Also pack each publishable package and install it into an empty project with npm,
+          asserting there is no ERESOLVE and exactly one copy of each ecosystem sibling.
+          Costs a real npm install per package, so it is off for push and on for release.
+        type: boolean
+        default: false
+      run-impact-check:
+        description: |
+          Also name the published consumers that this checkout's versions would strand.
+          Meant for the release pull request: every other check lives in the consumer and
+          therefore fires after the fact, while this one runs where the number is still
+          a decision. Informational — it never fails the job.
+        type: boolean
+        default: false
+      timeout-minutes:
+        description: 'Without a ceiling, a wedged process holds the runner for the GitHub default of 6 hours.'
+        type: number
+        default: 15
+
+permissions:
+  contents: read
+
+env:
+  # Set once for every job. `${{ inputs.x }}` spliced into a run block is substituted before
+  # bash parses the line, so a value carrying a shell metacharacter would run as code; reaching
+  # the shell as an environment variable is what makes that impossible.
+  DEP_CHECK_VERSION: ${{ inputs.dep-check-version }}
+
+jobs:
+  dep-check:
+    name: dependency gate
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: Checkout the repository under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+          # Nothing here pushes. Leaving the token in .git/config lets any later step
+          # act as this repository.
+          persist-credentials: false
+
+      - name: Enable Corepack and pin pnpm
+        # Skipped for a repository that does not use pnpm — theokit-skills is on npm, and
+        # fetching a pnpm it will never invoke is a download and a lie in the log.
+        if: ${{ hashFiles('repo/pnpm-lock.yaml') != '' }}
+        # The version reaches the shell as an environment variable. `${{ inputs.x }}`
+        # inside a run block is substituted before bash parses the line, so a value
+        # carrying a shell metacharacter would run as code in this job.
+        env:
+          PNPM_VERSION: ${{ inputs.pnpm-version }}
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install the repository under test
+        # The whole point of check A is comparing the declared range against what the
+        # lockfile actually resolves, so the tree has to exist before it can be read.
+        #
+        # The command comes from the lockfile on disk rather than from `packageManager`,
+        # because the two can disagree: theokit-skills declares pnpm, ships a
+        # package-lock.json and runs `npm install` in its own CI. A hardcoded
+        # `pnpm install --frozen-lockfile` fails there, and the failure reads like a
+        # dependency problem instead of a wrong guess.
+        run: |
+          set -euo pipefail
+          cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" install-command --root repo)
+          echo "detected: $cmd"
+          cd repo && $cmd
+
+      - name: A — declared range vs installed version
+        run: npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" manifest --root repo
+
+      - name: D — install the tarball as a consumer would
+        if: ${{ inputs.run-install-check }}
+        # Asks two questions, not one: does it install at all, and is there exactly one
+        # copy of each sibling in the tree. The studio defect passed the first and failed
+        # the second — npm installed two runtimes and hoisted the older one to the root.
+        run: npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" install --root repo
+
+  floor:
+    name: suite at the bottom of every declared range
+    if: ${{ inputs.run-floor-check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: Checkout the repository under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+          persist-credentials: false
+
+      - name: Enable Corepack and pin pnpm
+        if: ${{ hashFiles('repo/pnpm-lock.yaml') != '' }}
+        env:
+          PNPM_VERSION: ${{ inputs.pnpm-version }}
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install the repository under test
+        # The command comes from the lockfile on disk rather than from `packageManager`,
+        # because the two can disagree: theokit-skills declares pnpm, ships a
+        # package-lock.json and runs `npm install` in its own CI. A hardcoded
+        # `pnpm install --frozen-lockfile` fails there, and the failure reads like a
+        # dependency problem instead of a wrong guess.
+        run: |
+          set -euo pipefail
+          cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" install-command --root repo)
+          echo "detected: $cmd"
+          cd repo && $cmd
+
+      - name: Pin every sibling to the bottom of its declared range
+        # Writes the overrides into the field this repository's package manager reads —
+        # `pnpm.overrides` for pnpm, top-level `overrides` for npm, `resolutions` for
+        # yarn. Writing to the wrong one is silently ignored, and then the reinstall
+        # resolves the same versions, the suite passes, and the leg reports a floor it
+        # never visited. That is why the choice lives in a tested module rather than here.
+        run: npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" pin-floors --root repo
+
+      - name: Reinstall at the floor
+        # Deliberately NOT frozen: pinning a floor IS a resolution change, and the whole
+        # point of the leg is to resolve differently from the committed lockfile.
+        run: |
+          set -euo pipefail
+          cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" install-command --root repo --unlocked)
+          echo "detected: $cmd"
+          cd repo && $cmd
+
+      - name: Suite
+        # zizmor: ignore[template-injection]
+        #
+        # This input IS code by contract — it is the suite the calling repository wants run
+        # at the floor, and running it is the entire job. What bounds it is the trust model
+        # of `workflow_call`: the value can only come from a workflow in a repository that
+        # already chose to call this one, never from a pull request author. A caller that
+        # can set this string can equally write the step itself.
+        #
+        # Empty means "derive it", which is the default: the manager comes from the lockfile
+        # the same way the install and the overrides field do. Detecting it in two places out
+        # of three is indistinguishable from not detecting it at all.
+        env:
+          CALLER_COMMAND: ${{ inputs.test-command }}
+        run: |
+          set -euo pipefail
+          if [ -n "${CALLER_COMMAND}" ]; then
+            cmd="${CALLER_COMMAND}"
+          else
+            cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" run-command --root repo test)
+          fi
+          echo "suite: $cmd"
+          cd repo && $cmd
+
+  impact:
+    name: consumers this release would strand
+    if: ${{ inputs.run-impact-check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: Checkout the repository under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Who breaks if this publishes
+        # Reads the registry only — no install of the repository under test is needed,
+        # because the question is about published consumers rather than this tree.
+        #
+        # Never fails the job. Leaving consumers behind is frequently the correct call;
+        # what was missing was anyone knowing WHO, at a moment when it could still be
+        # discussed. A gate that blocked here would just be routed around.
+        run: |
+          npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" impact --root repo | tee impact.txt
+          {
+            echo "### Consumers this release would strand"
+            echo ""
+            echo '```'
+            cat impact.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

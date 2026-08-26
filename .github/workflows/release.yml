@@ -1,0 +1,122 @@
+# Publishes @theokit/dep-check on a version tag.
+#
+# Trusted publishing: npm mints a short-lived credential from this workflow's OIDC token, so
+# there is no secret in this repository and nothing to rotate. Provenance — a signed statement
+# linking the tarball to this commit and this workflow — is emitted automatically.
+#
+# Requires, on the npm package settings page: a Trusted Publisher naming this repository and
+# this workflow file, plus the `npm` environment below. That page does not exist until the
+# package has been published once, so the FIRST publish is manual and the token used for it is
+# deleted afterwards. The circularity is real and npm documents no way around it.
+name: Release
+
+on:
+  push:
+    tags: ['dep-check-v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run every gate and pack the tarball, but do not publish.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  # A tag can be cut from any commit, including one that never passed CI. Re-running the gates
+  # here means the thing being published is the thing that was verified, not a namesake.
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 # zizmor: ignore[cache-poisoning]
+        with:
+          # No `cache:` input, so setup-node restores nothing a pull request could have written.
+          node-version: '22.12'
+
+      - name: Install
+        working-directory: packages/dep-check
+        run: npm ci --no-audit --no-fund
+
+      - name: Test
+        working-directory: packages/dep-check
+        run: npm test
+
+      - name: The tag must match the version being published
+        # A tag saying v0.2.0 on a manifest saying 0.1.0 publishes 0.1.0 and fails on the second
+        # attempt with "cannot publish over an existing version" — an error about the wrong thing,
+        # hours after the mistake.
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: packages/dep-check
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          manifest="$(node -p "require('./package.json').version")"
+          tagged="${TAG#dep-check-v}"
+          echo "manifest=$manifest tag=$tagged"
+          test "$manifest" = "$tagged"
+
+  publish:
+    name: publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm provenance — see the publish step
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Publishing goes through `npm publish`; nothing here pushes with git.
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 # zizmor: ignore[cache-poisoning]
+        with:
+          node-version: '22.12'
+          # NO `registry-url`. It looks harmless and is not: setup-node writes an npmrc declaring
+          # `_authToken=${NODE_AUTH_TOKEN}` UNCONDITIONALLY, then exports that variable only if the
+          # caller supplied one — which, under OIDC, nobody does. The job would publish with a
+          # config naming a credential that does not exist.
+
+      # THE STEP WITHOUT WHICH THE OIDC CONFIGURATION IS CORRECT AND USELESS. setup-node ships
+      # whatever npm the Node release bundles, and Node 22 bundles npm 10.9.7. OIDC needs
+      # npm >= 11.5.1: an older npm does not know what to do with `id-token: write`, looks for a
+      # credential, finds none, and the registry answers `E404 Not Found - PUT`.
+      #
+      # Pinned exactly, and NOT to 12.x — npm 12 returns an ARRAY from `npm info --json` where
+      # earlier npm returned an object, which breaks tooling that reads `.versions`. Measured in
+      # theokit-di; 11.9.0 is the newest that clears the OIDC floor and avoids it.
+      - name: Install an npm that speaks OIDC
+        run: npm install -g npm@11.9.0 # zizmor: ignore[adhoc-packages] — bootstrapping npm itself; no lockfile covers the package manager
+
+      - name: Install
+        working-directory: packages/dep-check
+        run: npm ci --no-audit --no-fund
+
+      - name: Publish with provenance
+        if: github.event_name == 'push' || inputs.dry_run == false
+        working-directory: packages/dep-check
+        # Provenance is a signed, verifiable statement linking this tarball to this commit and
+        # this workflow, so a consumer can check where their bytes came from instead of trusting
+        # a name. Trusted publishing emits it automatically; `--provenance` is passed anyway as a
+        # statement of intent that survives if the auth path is ever changed.
+        #
+        # NO `NODE_AUTH_TOKEN`. The npm CLI PREFERS token auth over the OIDC token, so the day
+        # someone adds that secret for any reason, this publish silently stops using the trusted
+        # publisher and stops carrying provenance — with no error to notice.
+        run: npm publish --provenance --access public
+
+      - name: Publish skipped (dry run)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        working-directory: packages/dep-check
+        run: |
+          npm pack --dry-run
+          echo "Every gate passed. Re-run with dry_run=false, or push a dep-check-v<version> tag, to publish."

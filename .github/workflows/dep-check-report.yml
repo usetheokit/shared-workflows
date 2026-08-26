@@ -1,0 +1,99 @@
+# The non-blocking half of the dependency gate, organisation-wide.
+#
+# It asks the one question no repository can answer about itself: does the range a
+# package declares still admit the sibling's published `latest`? That needs the
+# registry, which is exactly why it must not gate a push — on the day @theokit/sdk
+# cuts a major, every repository in the organisation would go red without anyone
+# having touched anything, and a build that breaks on someone else's release schedule
+# teaches a team to ignore red.
+#
+# One workflow, not nine. The sweep reads the registry, so it sees every package
+# published under the scope — including the ones no repository owns, which is how
+# five undeprecated packages declaring peers on dead majors were found. No repository's
+# CI could have caught those: no repository contains them.
+name: Dependency Report
+
+on:
+  schedule:
+    # 06:20 America/Sao_Paulo (09:20 UTC), weekdays. Cron here is UTC, always.
+    - cron: '20 9 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dep-check-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: sweep the scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # Writing the finding into an issue IS the output of this job. Nothing else here
+      # needs a token.
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.12'
+
+      - name: Install
+        working-directory: packages/dep-check
+        run: npm ci --no-audit --no-fund
+
+      - name: Sweep
+        id: sweep
+        # Runs the tool from THIS checkout rather than the published version, deliberately: the
+        # sweep is the organisation's own report, and a defect in the detector should surface here
+        # first — before it is pinned into eleven repositories by a version bump.
+        run: |
+          node packages/dep-check/index.mjs audit --markdown > body.md
+          node packages/dep-check/index.mjs audit --json > findings.json
+          contracts=$(node -e "const f=require('./findings.json').findings;console.log(f.filter(x=>x.severity==='contract').length)")
+          echo "contracts=${contracts}" >> "$GITHUB_OUTPUT"
+
+      - name: Open, update or close the standing issue
+        env:
+          # Values reach the shell as environment variables rather than being spliced
+          # into the script by the expression engine, which would run a finding's text
+          # as code in a job holding a write token.
+          GH_TOKEN: ${{ github.token }}
+          CONTRACTS: ${{ steps.sweep.outputs.contracts }}
+          TITLE: 'dep-check: a published peer range no longer admits its sibling'
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --repo "$REPO" --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "Swept by \`dep-check audit\` on $(date -u +%Y-%m-%d), from run $GITHUB_RUN_ID."
+            echo "This issue is rewritten by each sweep, and closed automatically when the contract table is empty."
+            echo "Ranges that are merely behind are listed for context and are Renovate's job, not this issue's."
+          } >> body.md
+
+          if [ "$CONTRACTS" -gt 0 ]; then
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --repo "$REPO" --body-file body.md
+              echo "updated #${existing} — ${CONTRACTS} broken contract(s)"
+            else
+              gh issue create --repo "$REPO" --title "$TITLE" --body-file body.md --label bug
+            fi
+          elif [ -n "$existing" ]; then
+            gh issue close "$existing" --repo "$REPO" --reason completed \
+              --comment "Swept clean: every published peer range admits its sibling's current \`latest\`. Reopened automatically by the next sweep that finds otherwise."
+            echo "closed #${existing}"
+          else
+            echo "clean — no broken contract, no standing issue"
+          fi
