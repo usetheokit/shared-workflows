@@ -1,0 +1,84 @@
+# Lints the workflows themselves. Every other gate in this repository checks the
+# product; this one checks the thing that runs the gates.
+#
+# It exists because the standard it enforces decays silently. An action pinned to a
+# commit SHA reads no differently from one pinned to `v4` until you look, a job
+# without `timeout-minutes` looks exactly like one with it, and a `${{ }}` spliced
+# into a `run:` block looks like every other line of shell. None of it fails a build
+# — it just sits there until the day it matters. Reviewers do not catch this class
+# of drift by reading diffs, so a machine does.
+#
+# Two tools, because they answer different questions:
+#   actionlint — is this a valid workflow? (schema, expressions, shellcheck on run blocks)
+#   zizmor     — is this workflow safe? (unpinned actions, template injection,
+#                over-broad permissions, credential persistence, cache poisoning)
+#
+# Both are pinned to a digest for the same reason the workflows they audit are.
+#
+# REUSABLE. Ten repositories ran a byte-identical copy of this file; the copies could not
+# drift apart in behaviour, but they could only be corrected ten times. `secret-scan` next
+# door shows where that ends: nine copies, one comment rewritten, two people writing the
+# same finding twice.
+#
+#   jobs:
+#     workflow-lint:
+#       uses: usetheokit/shared-workflows/.github/workflows/workflow-lint.yml@v1
+#
+# The triggers and the concurrency group live in the CALLER: `github.ref` inside a reusable
+# is the caller's ref, but a concurrency group declared here would be shared across every
+# repository calling it, so a run in one would cancel a run in another.
+name: Workflow Lint
+
+on:
+  workflow_call:
+    inputs:
+      actionlint-image:
+        description: 'Pinned actionlint image, by digest. A tag would be a mutable pointer to a linter that runs with the repository checked out.'
+        type: string
+        default: 'rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667'
+      zizmor-version:
+        description: 'Pinned zizmor version.'
+        type: string
+        default: '1.28.0'
+      timeout-minutes:
+        type: number
+        default: 10
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: actionlint + zizmor
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: actionlint
+        # The pinned image carries its own shellcheck, so `run:` blocks are linted
+        # too — the same check that runs locally, with no toolchain to install.
+        # The image reaches the shell as an environment variable rather than being spliced
+        # in by the expression engine: a value carrying a shell metacharacter would run as
+        # code in a job that has the repository checked out.
+        env:
+          ACTIONLINT_IMAGE: ${{ inputs.actionlint-image }}
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/repo" --workdir /repo \
+            "${ACTIONLINT_IMAGE}" \
+            -color
+
+      - name: zizmor
+        # `--min-severity low` keeps the informational findings out while still
+        # failing on anything that is actually a weakness. A finding that is
+        # understood and accepted gets a `# zizmor: ignore[rule]` comment WITH the
+        # reason next to it — never a blanket exclusion in a config file, which
+        # hides the decision from whoever reads the workflow later.
+        env:
+          ZIZMOR_VERSION: ${{ inputs.zizmor-version }}
+        run: |
+          pipx install "zizmor==${ZIZMOR_VERSION}"
+          zizmor --no-progress --min-severity low .github/workflows/

@@ -9,6 +9,8 @@ gate instead of eleven that drift.
 | --- | --- |
 | [`.github/workflows/dep-check.yml`](.github/workflows/dep-check.yml) | The dependency gate. Reusable — a repository calls it. |
 | [`.github/workflows/dep-check-report.yml`](.github/workflows/dep-check-report.yml) | The organisation-wide sweep. Scheduled, runs here, opens one standing issue. |
+| [`.github/workflows/workflow-lint.yml`](.github/workflows/workflow-lint.yml) | actionlint + zizmor over a caller's workflows. Reusable. |
+| [`.github/workflows/secret-scan.yml`](.github/workflows/secret-scan.yml) | TruffleHog over the diff range. Reusable. |
 | [`packages/dep-check`](packages/dep-check) | `@theokit/dep-check` — the tool the workflows invoke. |
 
 ## Adopting the gate
@@ -39,6 +41,14 @@ jobs:
 
 Then mark **`dep-check / dependency gate`** required in branch protection. A job that runs and
 reports but is not required blocks nothing.
+
+## Triggers stay in the caller
+
+Every reusable here declares `workflow_call` and nothing else. The `on:` block and the
+`concurrency:` group belong to the caller, for a reason that is easy to get wrong: a concurrency
+group declared inside a reusable is shared by every repository that calls it, so a run in one
+repository would cancel a run in another. `github.ref` inside a reusable is the caller's ref, which
+makes the group *look* correctly scoped right up until two repositories push at the same time.
 
 ## Two things are versioned here, and they are versioned differently
 
