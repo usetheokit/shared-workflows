@@ -21,7 +21,7 @@
  * none of the other three mean anything either.
  */
 import { parseArgs } from "node:util";
-import { ceilingDrift, consumersLeftBehind, installedDrift, isSibling, rangeFloor, sharedFloor, unpublishedSiblings, untestedFloors } from "./src/checks.mjs";
+import { ceilingDrift, consumersLeftBehind, groupUntestedFloors, installedDrift, isSibling, rangeFloor, sharedFloor, unpublishedSiblings, untestedFloors } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
 import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
 import { detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
@@ -34,6 +34,7 @@ const { values: flags, positionals } = parseArgs({
     json: { type: "boolean", default: false },
     markdown: { type: "boolean", default: false },
     unlocked: { type: "boolean", default: false },
+    package: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -43,6 +44,7 @@ const USAGE = `dep-check <command> [--root <dir>] [--json]
 
   manifest                    (A) declared range vs the version actually installed. Exits 1 on drift.
   floors                      (B) the lowest published version each range admits.
+  floor-matrix                the extra runs needed to exercise floors the intersection misses.
   registry                    (C) declared range vs the sibling's published latest. Never exits 1.
   consumers <pkg> <version>   (E) who breaks if <pkg> publishes <version>.
   install                     (D) pack, install as a consumer, assert one copy of each sibling. Exits 1 on failure.
@@ -54,6 +56,8 @@ const USAGE = `dep-check <command> [--root <dir>] [--json]
                               packageManager field — the two can disagree.
   install-command             print the install command for this repository's lockfile.
   run-command <script>        print the command that runs a package script here (default: test).
+                              --package <name> narrows it to one workspace member.
+  pin-one <dep> <version>     pin a single sibling, for a per-package floor run.
   build-command               print this repository's build command, or nothing if it has none.
 `;
 
@@ -365,7 +369,9 @@ async function lowestFloors(root) {
     }
   }
   for (const { dep, declared } of irreconcilable) {
-    console.log(`  note: ${dep} is declared as ${declared.join(" and ")}, which share no published version — not pinned`);
+    // stderr, not stdout: `floor-matrix` writes JSON a workflow parses, and a diagnostic line
+    // mixed into it makes the matrix unreadable. Still shown in the job log either way.
+    console.error(`  note: ${dep} is declared as ${declared.join(" and ")}, which share no published version — not pinned`);
   }
   // Printed with the pins rather than kept for a caller, because the reader who needs it is the
   // one looking at a green floor leg and inferring more coverage than it has (#6).
@@ -373,17 +379,35 @@ async function lowestFloors(root) {
   // Grouped by the floor going untested, not listed per package: `theokit-plugins` has fourteen
   // packages declaring `theokit >=0.50.1`, and fourteen identical lines is a note nobody finishes
   // reading — the same reason the check exists is the reason it has to stay legible.
-  const byFloor = new Map();
-  for (const gap of untested) {
-    const key = `${gap.dep}\u0000${gap.claims}\u0000${gap.tested}`;
-    if (!byFloor.has(key)) byFloor.set(key, { ...gap, packages: [] });
-    byFloor.get(key).packages.push(gap.pkg);
-  }
-  for (const gap of byFloor.values()) {
+  for (const gap of groupUntestedFloors(untested)) {
     const who = gap.packages.length === 1 ? gap.packages[0] : `${gap.packages.length} packages (${gap.packages.join(", ")})`;
-    console.log(`  note: ${who} declare${gap.packages.length === 1 ? "s" : ""} ${gap.dep} ${gap.range}, whose floor ${gap.claims} is NOT exercised — the leg installs ${gap.tested}, the bottom of the intersection with the other declared ranges`);
+    console.error(`  note: ${who} declare${gap.packages.length === 1 ? "s" : ""} ${gap.dep} ${gap.range}, whose floor ${gap.version} is NOT exercised — the leg installs ${gap.tested}, the bottom of the intersection with the other declared ranges`);
   }
+  lowestFloors.lastUntested = untested;
   return Object.fromEntries([...floors.entries()].sort());
+}
+
+// GitHub caps a matrix at 256 jobs, and a floor leg that fans out to hundreds is a bill, not a
+// gate. Twenty is well above what any repository here produces — theokit-sdk, the widest, has
+// three — and the overflow is reported rather than dropped.
+const MAX_FLOOR_RUNS = 20;
+
+/**
+ * The extra runs the floor leg needs to exercise what a single global override cannot.
+ *
+ * Printed as JSON for a workflow matrix. Empty is the normal answer — most repositories declare
+ * one range per sibling, and there is nothing the intersection misses.
+ */
+async function commandFloorMatrix(root) {
+  await lowestFloors(root);
+  const runs = groupUntestedFloors(lowestFloors.lastUntested ?? []);
+  const capped = runs.slice(0, MAX_FLOOR_RUNS);
+  if (runs.length > capped.length) {
+    // Never a silent cap: a truncated matrix reads as "everything was covered" when it was not.
+    console.error(`::warning::${runs.length} unexercised floors, running the first ${capped.length}; ${runs.length - capped.length} not checked`);
+  }
+  console.log(JSON.stringify(capped));
+  return 0;
 }
 
 async function commandFloorOverrides(root) {
@@ -441,7 +465,22 @@ function commandRunCommand(root, script) {
     console.error(`no lockfile in ${root}: cannot tell which package manager this repository uses`);
     return 1;
   }
-  console.log([...detected.run, script || "test"].join(" "));
+  // `--package` narrows it to one workspace member, which the per-package floor leg needs: it
+  // installs a sibling at ONE package's declared floor, and running the whole workspace there
+  // would fail packages whose own ranges exclude that version — the defect #4 was.
+  const base = flags.package ? detected.filtered(flags.package) : detected.run;
+  console.log([...base, script || "test"].join(" "));
+  return 0;
+}
+
+/** Pin a single sibling, for a run that exercises one package's own declared floor (#16). */
+function commandPinOne(root, dep, version) {
+  if (!dep || !version) {
+    console.error("usage: dep-check pin-one <dep> <version>");
+    return 1;
+  }
+  const result = pinOverrides(root, { [dep]: version });
+  console.log(`pinned ${dep} ${version} under \`${result.field}\` for ${result.manager}`);
   return 0;
 }
 
@@ -469,7 +508,13 @@ function commandBuildCommand(root) {
     return 1;
   }
   const script = detectBuildScript(root);
-  if (script) console.log([...detected.run, script].join(" "));
+  // `--package` builds that package AND what it depends on, nothing else. Building the whole
+  // workspace at a floor only one package claims fails the packages whose own ranges exclude it:
+  // measured on theokit-sdk, `pnpm build` at `@theokit/sdk@4.4.1` failed on `sdk-cache`, which
+  // declares `>=4.54.0` and has no business being compiled there. That is the defect #4 was,
+  // reintroduced one level down.
+  const base = flags.package ? detected.filteredWithDeps(flags.package) : detected.run;
+  if (script) console.log([...base, script].join(" "));
   return 0;
 }
 
@@ -482,10 +527,12 @@ const commands = {
   audit: () => commandAudit(),
   impact: () => commandImpact(flags.root),
   "floor-overrides": () => commandFloorOverrides(flags.root),
+  "floor-matrix": () => commandFloorMatrix(flags.root),
   "pin-floors": () => commandPinFloors(flags.root),
   "install-command": () => commandInstallCommand(flags.root, { unlocked: flags.unlocked }),
   "run-command": () => commandRunCommand(flags.root, rest[0]),
   "build-command": () => commandBuildCommand(flags.root),
+  "pin-one": () => commandPinOne(flags.root, rest[0], rest[1]),
 };
 
 if (flags.help || !command || !commands[command]) {

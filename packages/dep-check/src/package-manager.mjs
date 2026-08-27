@@ -18,9 +18,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const LOCKFILES = [
-  { file: "pnpm-lock.yaml", manager: "pnpm", install: ["pnpm", "install", "--frozen-lockfile"], unlocked: ["pnpm", "install", "--no-frozen-lockfile"], run: ["pnpm", "run"], overridesPath: ["pnpm", "overrides"] },
-  { file: "package-lock.json", manager: "npm", install: ["npm", "ci", "--no-audit", "--no-fund"], unlocked: ["npm", "install", "--no-audit", "--no-fund"], run: ["npm", "run"], overridesPath: ["overrides"] },
-  { file: "yarn.lock", manager: "yarn", install: ["yarn", "install", "--immutable"], unlocked: ["yarn", "install"], run: ["yarn", "run"], overridesPath: ["resolutions"] },
+  { file: "pnpm-lock.yaml", manager: "pnpm", install: ["pnpm", "install", "--frozen-lockfile"], unlocked: ["pnpm", "install", "--no-frozen-lockfile"], run: ["pnpm", "run"], filtered: (pkg) => ["pnpm", "--filter", pkg, "run"], filteredWithDeps: (pkg) => ["pnpm", "--filter", `${pkg}...`, "run"], overridesPath: ["pnpm", "overrides"] },
+  { file: "package-lock.json", manager: "npm", install: ["npm", "ci", "--no-audit", "--no-fund"], unlocked: ["npm", "install", "--no-audit", "--no-fund"], run: ["npm", "run"], filtered: (pkg) => ["npm", "run", "--workspace", pkg], filteredWithDeps: (pkg) => ["npm", "run", "--workspace", pkg], overridesPath: ["overrides"] },
+  { file: "yarn.lock", manager: "yarn", install: ["yarn", "install", "--immutable"], unlocked: ["yarn", "install"], run: ["yarn", "run"], filtered: (pkg) => ["yarn", "workspace", pkg, "run"], filteredWithDeps: (pkg) => ["yarn", "workspace", pkg, "run"], overridesPath: ["resolutions"] },
 ];
 
 /** Null when no lockfile is present — the caller decides whether that is an error. */

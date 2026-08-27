@@ -8,6 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [dep-check 0.7.0] - 2026-08-27
+
+### Added
+
+- The floor leg exercises the floors a single global override cannot reach. It writes one override
+  per sibling, so it can only pin a version every declared range admits — the bottom of the
+  intersection — and where ranges diverge the lower floors were never installed. `0.5.0` started
+  naming them; this runs them. One extra job per (sibling, unexercised floor), installing that
+  floor and running only the packages that declare it (#16)
+
+  The gap was not hypothetical: four packages in `theokit-sdk` declared `>=4.0.0` and none compiled
+  against `4.0.1` (theokit-sdk#423) — live on the registry across ~54 releases of claimed interval,
+  invisible to the shared pin, and found only by installing per package.
+
+- `dep-check floor-matrix`, which prints those runs as JSON for a workflow matrix, and `pin-one`,
+  which pins a single sibling. `run-command` and `build-command` take `--package` (#16)
+
+### Fixed
+
+- `build-command --package` builds the named package **and its workspace dependencies**, not the
+  whole workspace. Building everything at a floor only some packages claim fails the ones whose own
+  ranges exclude it — measured on `theokit-sdk`, where building at `@theokit/sdk@4.4.1` failed on
+  `sdk-cache`, which declares `>=4.54.0`. That is the defect #4 was, one level down (#16)
+
+- Diagnostics from the floor commands go to stderr rather than stdout, so `floor-matrix` output
+  parses as JSON (#16)
+
+
+### Added
+
+- The release advances `v1` itself, after verifying the registry actually serves the version and
+  then reading the ref back to confirm it moved. It was the last manual step in a release and had
+  been missed on two of six — `0.2.0` left the tag serving `0.1.0` and blocked the gate on
+  `theokit#521`; `0.5.0` left it serving `0.4.0`, so no consumer received that release. It runs as
+  a separate job holding `contents: write` and no OIDC, so the job that mints the npm credential
+  gains no repository write (#15)
+
+
 ## [dep-check 0.6.0] - 2026-08-27
 
 ### Fixed
