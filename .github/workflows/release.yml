@@ -63,6 +63,31 @@ jobs:
           echo "manifest=$manifest tag=$tagged"
           test "$manifest" = "$tagged"
 
+      - name: The gate must run the version being published
+        # `0.5.0` published to npm while `dep-check.yml` still pinned `0.4.0` and `v1` still
+        # pointed at the commit before it, so no consumer received the release — the whole of it
+        # was a floor leg that names its untested floors, and nobody got that. Second occurrence;
+        # `0.2.0` did the same and blocked the gate on theokit#521 until the tag was moved by hand.
+        #
+        # The publish itself is green in that state, which is what makes it worth refusing here:
+        # npm has the tarball, with provenance, and nothing about that green is false. It just
+        # does not mean the gate changed.
+        #
+        # This guards the pin. Moving `v1` is a separate step and a separate failure — see #13.
+        run: |
+          set -euo pipefail
+          manifest="$(node -p "require('./packages/dep-check/package.json').version")"
+          pinned="$(awk '/^      dep-check-version:/{f=1} f&&/^        default:/{gsub(/[^0-9.]/,"",$2);print $2;exit}' .github/workflows/dep-check.yml)"
+          echo "manifest=$manifest  dep-check.yml default=$pinned"
+          if [ -z "$pinned" ]; then
+            echo "::error::could not read dep-check-version default from .github/workflows/dep-check.yml"
+            exit 1
+          fi
+          if [ "$manifest" != "$pinned" ]; then
+            echo "::error::publishing $manifest while the gate pins $pinned — bump the default in .github/workflows/dep-check.yml, or no caller will run this release"
+            exit 1
+          fi
+
   publish:
     name: publish to npm
     needs: verify
