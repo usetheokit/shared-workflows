@@ -21,7 +21,7 @@
  * none of the other three mean anything either.
  */
 import { parseArgs } from "node:util";
-import { ceilingDrift, consumersLeftBehind, groupUntestedFloors, installedDrift, isSibling, rangeFloor, sharedFloor, unpublishedSiblings, untestedFloors } from "./src/checks.mjs";
+import { ceilingDrift, consumersLeftBehind, groupUntestedFloors, installedDrift, isSibling, pinnableSiblings, rangeFloor, sharedFloor, unpublishedSiblings, untestedFloors } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
 import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
 import { detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
@@ -350,7 +350,14 @@ async function commandImpact(root) {
  */
 async function lowestFloors(root) {
   const ranges = new Map();
-  for (const ref of collectReferences(root)) {
+  // A sibling that lives in this workspace is not pinned: the override would replace the local
+  // link with a published version, which is a pairing that exists nowhere. Its declared range is
+  // still checked — by D, which installs the packed tarball the way a consumer would.
+  const members = findPublishablePackages(root).map((p) => p.manifest.name);
+  const all = collectReferences(root);
+  const pinnable = pinnableSiblings(all, members);
+  const perPackageOnly = all.filter((r) => !pinnable.includes(r));
+  for (const ref of pinnable) {
     if (!ranges.has(ref.dep)) ranges.set(ref.dep, []);
     ranges.get(ref.dep).push({ pkg: ref.pkg, range: ref.range });
   }
@@ -382,6 +389,24 @@ async function lowestFloors(root) {
   for (const gap of groupUntestedFloors(untested)) {
     const who = gap.packages.length === 1 ? gap.packages[0] : `${gap.packages.length} packages (${gap.packages.join(", ")})`;
     console.error(`  note: ${who} declare${gap.packages.length === 1 ? "s" : ""} ${gap.dep} ${gap.range}, whose floor ${gap.version} is NOT exercised — the leg installs ${gap.tested}, the bottom of the intersection with the other declared ranges`);
+  }
+  // A sibling that lives in this workspace does not go into the GLOBAL override — the override is
+  // one value for the whole tree, and forcing a published version over a workspace link fails the
+  // packages that consume it via `workspace:` and never see an old one. Measured on theokit#526:
+  // `@theokit/http` was pinned at `0.4.0`, the floor of the `>=0.1.0-alpha.0` that
+  // `@theokit/agents` declares, and `packages/theo` — which declares `workspace:^` and claims
+  // nothing about `0.4.0` — failed to build. Defect #4 exactly, in a new place.
+  //
+  // The claim is still worth checking, and it is checked: these go to the PER-PACKAGE runs, where
+  // that floor is installed and only the packages that actually declare it are built. That is how
+  // theokit-di#44 was found, so dropping them entirely would have cost a real finding.
+  for (const ref of perPackageOnly) {
+    if (!ref.range || /^(workspace|file|link|portal):/.test(ref.range)) continue;
+    const versions = await publishedVersions(ref.dep);
+    const claims = rangeFloor(ref.range, versions);
+    if (!claims) continue;
+    untested.push({ dep: ref.dep, pkg: ref.pkg, range: ref.range, claims, tested: "(not pinned globally)" });
+    console.error(`  note: ${ref.pkg} declares ${ref.dep} ${ref.range} and ${ref.dep} lives in this workspace — floor ${claims} goes to its own run rather than a global override`);
   }
   lowestFloors.lastUntested = untested;
   return Object.fromEntries([...floors.entries()].sort());
