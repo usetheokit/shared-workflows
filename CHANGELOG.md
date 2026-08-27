@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [dep-check 0.9.1] - 2026-08-27
+
+### Fixed
+
+- The organisation-wide audit labels an `ahead` range the same way check C does. `0.9.0` gave
+  `ceilingDrift` a direction and taught check C to use it, and left the audit reading the old
+  shape — so a published package whose floor sits above `latest` would have printed
+  `(undefined behind)` and been filed under `contract`. Introduced by `0.9.0` and caught before
+  it ran anywhere (#24)
+
+
 ## [dep-check 0.9.0] - 2026-08-27
 
 ### Fixed
