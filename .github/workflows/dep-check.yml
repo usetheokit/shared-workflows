@@ -32,7 +32,7 @@ on:
           TOOL is a semver artifact, so a behaviour change is a version bump somebody reviewed.
           The pin lives here rather than in eleven callers.
         type: string
-        default: '0.8.0'
+        default: '0.9.0'
       run-floor-check:
         description: |
           Also run the suite against the BOTTOM of every declared sibling range, not only

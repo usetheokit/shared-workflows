@@ -55,7 +55,18 @@ export function ceilingDrift({ range, latest }) {
   // pull request against every consumer.
   if (semver.prerelease(latest)) return null;
   if (semver.satisfies(latest, range)) return null;
-  return { range, latest, majorsBehind: majorsBetween(range, latest) };
+  // A range can miss `latest` from either side, and the two are opposite problems.
+  //
+  // BEHIND is the ordinary one: the range stopped at an older major and the world moved on.
+  // AHEAD happens during a two-release change — a satellite declares the floor it will need
+  // before the version exists, so nobody can install it until the other package publishes.
+  // Reporting that as `0 majors behind` describes its mirror image: a reader scanning the
+  // column sees a number that reads as "roughly up to date" for a package that installs nowhere.
+  const floor = semver.minVersion(range);
+  if (floor && semver.gt(floor, latest)) {
+    return { range, latest, direction: "ahead" };
+  }
+  return { range, latest, direction: "behind", majorsBehind: majorsBetween(range, latest) };
 }
 
 /**
