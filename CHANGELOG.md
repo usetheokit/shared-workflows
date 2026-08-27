@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A reusable SonarQube Cloud analysis workflow (`.github/workflows/sonar.yml`). Callers get a scan
+  that imports coverage, which Automatic Analysis cannot do — its documentation states that "code
+  coverage information is not supported". It requires `sonar-project.properties` at the repository
+  root and fails loudly without it, because a scanner with no declared scope reads build output and
+  reports a source file as a duplicate of its own bundle. A missing `SONAR_TOKEN` warns and skips
+  rather than failing, so adopting the workflow does not turn a repository red before the secret
+  exists.
+
+  It exists as one workflow rather than eight copied steps for a measured reason: the only inline
+  version in the ecosystem, in `theokit-tui`, carried `if: matrix.node-version == '22.x'` against a
+  matrix of `['22.12', '22']`. The condition was never true, the step reported `skipped` on every
+  run for two months, and a skipped step is indistinguishable from a passing one in the checks list.
+
 ## [dep-check 0.9.1] - 2026-08-27
 
 ### Fixed
