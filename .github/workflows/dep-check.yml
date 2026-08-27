@@ -32,7 +32,7 @@ on:
           TOOL is a semver artifact, so a behaviour change is a version bump somebody reviewed.
           The pin lives here rather than in eleven callers.
         type: string
-        default: '0.6.0'
+        default: '0.7.0'
       run-floor-check:
         description: |
           Also run the suite against the BOTTOM of every declared sibling range, not only
@@ -304,4 +304,157 @@ jobs:
             echo '```'
             cat impact.txt
             echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The floor leg writes ONE global override per sibling, so it can only pin a version every
+  # declared range admits — the bottom of the intersection. Where ranges diverge, the lower floors
+  # are never installed: `@theokit/sdk-pty` claims `>=4.4.1` while the leg tests `4.54.0`, and
+  # nothing verifies the claim.
+  #
+  # That gap is not hypothetical. Four packages in theokit-sdk declared `>=4.0.0` and none of them
+  # compiled against `4.0.1` (theokit-sdk#423) — live on the registry across ~54 releases of
+  # claimed interval, invisible to the shared pin, and found only by installing per package.
+  #
+  # This job closes it: one run per (sibling, unexercised floor), each installing that floor and
+  # running only the packages that declare it. Running the whole workspace at a floor one package
+  # claims would fail packages whose own ranges exclude it — which is the defect #4 was.
+  floor-plan:
+    name: floors the shared pin cannot reach
+    if: ${{ inputs.run-floor-check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - name: Checkout the repository under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Plan the extra runs
+        id: plan
+        # Diagnostics go to stderr and the matrix to stdout, so this parses. An empty array is the
+        # normal answer: most repositories declare one range per sibling and the intersection
+        # reaches everything.
+        run: |
+          set -euo pipefail
+          matrix="$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" floor-matrix --root repo)"
+          count="$(printf '%s' "$matrix" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).length))")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "$count extra run(s) needed"
+
+  floor-per-package:
+    name: ${{ matrix.run.dep }}@${{ matrix.run.version }}, the floor only some packages claim
+    needs: floor-plan
+    if: ${{ needs.floor-plan.outputs.count != '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    strategy:
+      # Every unexercised floor is a separate claim. Stopping at the first failure would hide the
+      # rest, and the point of this job is to find out which claims are false — not that one is.
+      fail-fast: false
+      matrix:
+        run: ${{ fromJSON(needs.floor-plan.outputs.matrix) }}
+    steps:
+      - name: Checkout the repository under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: repo
+          persist-credentials: false
+
+      - name: Enable Corepack and pin pnpm
+        if: ${{ hashFiles('repo/pnpm-lock.yaml') != '' }}
+        env:
+          PNPM_VERSION: ${{ inputs.pnpm-version }}
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install the repository under test
+        run: |
+          set -euo pipefail
+          cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" install-command --root repo)
+          echo "detected: $cmd"
+          cd repo && $cmd
+
+      - name: Pin only this floor
+        env:
+          DEP: ${{ matrix.run.dep }}
+          VERSION: ${{ matrix.run.version }}
+        run: npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" pin-one --root repo "$DEP" "$VERSION"
+
+      - name: Reinstall at that floor
+        run: |
+          set -euo pipefail
+          cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" install-command --root repo --unlocked)
+          echo "detected: $cmd"
+          cd repo && $cmd
+
+      - name: Build, filtered to what claims this floor
+        # NOT the whole workspace. Building everything at a floor only some packages claim fails
+        # the packages whose own ranges exclude it — measured on theokit-sdk, where `pnpm build`
+        # at `@theokit/sdk@4.4.1` failed on `sdk-cache`, which declares `>=4.54.0`. That is the
+        # defect #4 was, reintroduced one level down. `--package` builds the claimant and its
+        # workspace dependencies, and nothing else.
+        env:
+          PACKAGES: ${{ join(matrix.run.packages, ' ') }}
+        run: |
+          set -euo pipefail
+          for pkg in $PACKAGES; do
+            cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" build-command --root repo --package "$pkg")
+            if [ -z "$cmd" ]; then
+              echo "no build script in this repository — nothing to build"
+              exit 0
+            fi
+            echo "::group::build $pkg"
+            echo "detected: $cmd"
+            (cd repo && $cmd)
+            echo "::endgroup::"
+          done
+
+      - name: Suite, for the packages that claim this floor
+        env:
+          PACKAGES: ${{ join(matrix.run.packages, ' ') }}
+        run: |
+          set -euo pipefail
+          for pkg in $PACKAGES; do
+            cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" run-command --root repo --package "$pkg" test)
+            echo "::group::$pkg"
+            echo "suite: $cmd"
+            (cd repo && $cmd)
+            echo "::endgroup::"
+          done
+
+      - name: What this run actually checked
+        if: always()
+        env:
+          DEP: ${{ matrix.run.dep }}
+          VERSION: ${{ matrix.run.version }}
+          RANGE: ${{ matrix.run.range }}
+          PACKAGES: ${{ join(matrix.run.packages, ', ') }}
+          SHARED: ${{ matrix.run.tested }}
+        run: |
+          {
+            echo "### ${DEP}@${VERSION} — the floor the shared pin does not reach"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| declared range | \`${RANGE}\` |"
+            echo "| floor exercised here | \`${VERSION}\` |"
+            echo "| what the shared pin installs | \`${SHARED}\` |"
+            echo "| packages run | ${PACKAGES} |"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -94,6 +94,28 @@ export function rangeFloor(range, publishedVersions) {
 }
 
 /**
+ * The extra runs needed to exercise the floors the intersection cannot reach.
+ *
+ * `untestedFloors` names them; this turns that list into work. One entry per distinct
+ * (sibling, floor) pair, carrying every package that declares it — `theokit-plugins` has fourteen
+ * packages on `theokit >=0.50.1`, and fourteen installs of the same version would cost fourteen
+ * times as much to prove one thing.
+ *
+ * Sorted, because an unstable matrix makes one failing job impossible to compare against the same
+ * job yesterday.
+ */
+export function groupUntestedFloors(untested) {
+  const byFloor = new Map();
+  for (const gap of untested) {
+    const key = `${gap.dep}\u0000${gap.claims}`;
+    if (!byFloor.has(key)) byFloor.set(key, { dep: gap.dep, version: gap.claims, range: gap.range, tested: gap.tested, packages: [] });
+    byFloor.get(key).packages.push(gap.pkg);
+  }
+  for (const g of byFloor.values()) g.packages.sort();
+  return [...byFloor.values()].sort((a, b) => a.dep.localeCompare(b.dep) || semver.compare(a.version, b.version));
+}
+
+/**
  * The siblings check D must take from the workspace, because the registry does not have them yet.
  *
  * A version pull request bumps a package and a sibling it depends on in the same cut. `pnpm pack`

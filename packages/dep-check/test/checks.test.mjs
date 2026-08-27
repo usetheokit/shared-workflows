@@ -6,6 +6,7 @@ import {
   installedDrift,
   isSibling,
   rangeFloor,
+  groupUntestedFloors,
   sharedFloor,
   unpublishedSiblings,
   untestedFloors,
@@ -104,6 +105,51 @@ describe("rangeFloor — check B: which published version is the bottom of the r
 
   it("test_skips_prereleases_so_the_floor_leg_does_not_run_on_a_next_tag", () => {
     expect(rangeFloor(">=5.0.0", published)).toBeNull();
+  });
+});
+
+describe("groupUntestedFloors — the extra runs needed to exercise what the intersection cannot", () => {
+  it("test_groups_packages_that_share_the_same_unexercised_floor_into_one_run", () => {
+    // `theokit-plugins` has fourteen packages declaring `theokit >=0.50.1`. Fourteen separate
+    // installs of the same version would cost fourteen times as much and prove one thing.
+    const grouped = groupUntestedFloors([
+      { dep: "theokit", pkg: "@theokit/plugin-a", range: ">=0.50.1", claims: "0.50.1", tested: "0.52.1" },
+      { dep: "theokit", pkg: "@theokit/plugin-b", range: ">=0.50.1", claims: "0.50.1", tested: "0.52.1" },
+    ]);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]).toMatchObject({ dep: "theokit", version: "0.50.1" });
+    expect(grouped[0].packages).toEqual(["@theokit/plugin-a", "@theokit/plugin-b"]);
+  });
+
+  it("test_keeps_distinct_floors_of_the_same_sibling_apart_ordered_by_semver_not_string", () => {
+    // Two floors of one sibling are two different claims and need two different installs.
+    //
+    // The order is semver, and these two versions are the case where that differs from sorting
+    // strings: 4.4.1 precedes 4.19.3 by version and follows it alphabetically. A matrix sorted
+    // the wrong way is not wrong in any visible way — which is why the assertion names it.
+    const grouped = groupUntestedFloors([
+      { dep: "@theokit/sdk", pkg: "@theokit/sdk-pty", range: ">=4.4.1", claims: "4.4.1", tested: "4.54.0" },
+      { dep: "@theokit/sdk", pkg: "@theokit/sdk-tools", range: ">=4.19.3", claims: "4.19.3", tested: "4.54.0" },
+    ]);
+    expect(grouped.map((g) => g.version)).toEqual(["4.4.1", "4.19.3"]);
+    expect(["4.4.1", "4.19.3"].slice().sort()).toEqual(["4.19.3", "4.4.1"]); // what a string sort gives
+  });
+
+  it("test_orders_runs_deterministically_so_a_matrix_does_not_reshuffle_between_runs", () => {
+    // A matrix whose entries move between runs makes one failing job impossible to compare
+    // against the same job yesterday.
+    const input = [
+      { dep: "zeta", pkg: "p2", range: ">=2.0.0", claims: "2.0.0", tested: "3.0.0" },
+      { dep: "alpha", pkg: "p1", range: ">=1.0.0", claims: "1.0.0", tested: "3.0.0" },
+    ];
+    const a = groupUntestedFloors(input).map((g) => `${g.dep}@${g.version}`);
+    const b = groupUntestedFloors([...input].reverse()).map((g) => `${g.dep}@${g.version}`);
+    expect(a).toEqual(b);
+    expect(a).toEqual(["alpha@1.0.0", "zeta@2.0.0"]);
+  });
+
+  it("test_returns_nothing_when_every_declared_floor_is_already_exercised", () => {
+    expect(groupUntestedFloors([])).toEqual([]);
   });
 });
 

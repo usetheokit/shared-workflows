@@ -107,3 +107,72 @@ describe("whether the repository builds before its tests", () => {
     expect(detectBuildScript(repoWith({ test: "vitest run" }))).toBeNull();
   });
 });
+
+/**
+ * The per-package floor leg installs one sibling at ONE package's declared floor and must run only
+ * that package's suite — running the whole workspace against a floor only one package claims would
+ * fail packages whose own ranges exclude it, which is the defect #4 was.
+ */
+describe("running a suite filtered to one package", () => {
+  function repo(lockfile) {
+    const root = mkdtempSync(join(tmpdir(), "dep-check-filter-"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "r", scripts: { test: "vitest run" } }));
+    writeFileSync(join(root, lockfile), lockfile.endsWith(".json") ? "{}" : "lockfileVersion: '9.0'\n");
+    return root;
+  }
+
+  it("test_pnpm_filters_with_its_own_flag", () => {
+    const m = detectPackageManager(repo("pnpm-lock.yaml"));
+    expect(m.filtered("@scope/pkg")).toEqual(["pnpm", "--filter", "@scope/pkg", "run"]);
+  });
+
+  it("test_npm_filters_with_workspace_rather_than_pnpms_flag", () => {
+    // `npm --filter` is not a thing. Getting this wrong fails with a usage error that reads like
+    // a dependency problem — the same shape as the `pnpm: command not found` this file already
+    // guards against.
+    const m = detectPackageManager(repo("package-lock.json"));
+    expect(m.filtered("@scope/pkg")).toEqual(["npm", "run", "--workspace", "@scope/pkg"]);
+  });
+
+  it("test_yarn_filters_with_workspace_before_run", () => {
+    const m = detectPackageManager(repo("yarn.lock"));
+    expect(m.filtered("@scope/pkg")).toEqual(["yarn", "workspace", "@scope/pkg", "run"]);
+  });
+
+  it("test_every_manager_can_filter_so_the_leg_never_falls_back_to_the_whole_workspace", () => {
+    for (const lock of ["pnpm-lock.yaml", "package-lock.json", "yarn.lock"]) {
+      expect(typeof detectPackageManager(repo(lock)).filtered).toBe("function");
+    }
+  });
+});
+
+describe("building filtered to one package and its dependencies", () => {
+  function repo(lockfile) {
+    const root = mkdtempSync(join(tmpdir(), "dep-check-bfilter-"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "r", scripts: { build: "turbo build" } }));
+    writeFileSync(join(root, lockfile), lockfile.endsWith(".json") ? "{}" : "lockfileVersion: '9.0'\n");
+    return root;
+  }
+
+  it("test_pnpm_includes_the_packages_dependencies_with_the_ellipsis", () => {
+    // `--filter pkg` alone builds pkg without its workspace dependencies, and the build fails on
+    // the missing dist/ of a sibling. `pkg...` is pnpm's way of saying "and what it needs".
+    const m = detectPackageManager(repo("pnpm-lock.yaml"));
+    expect(m.filteredWithDeps("@scope/pkg")).toEqual(["pnpm", "--filter", "@scope/pkg...", "run"]);
+  });
+
+  it("test_the_build_filter_is_not_the_same_as_the_test_filter", () => {
+    // Tests run for one package only; the build must also produce what that package imports.
+    const m = detectPackageManager(repo("pnpm-lock.yaml"));
+    expect(m.filteredWithDeps("p")).not.toEqual(m.filtered("p"));
+  });
+
+  it("test_every_manager_answers_so_the_leg_never_silently_builds_the_whole_workspace", () => {
+    // npm and yarn have no dependency-closure filter; using the plain workspace filter is the
+    // honest approximation, and the assertion is that a filter exists at all — building
+    // everything at a floor one package claims is what this exists to avoid.
+    for (const lock of ["pnpm-lock.yaml", "package-lock.json", "yarn.lock"]) {
+      expect(typeof detectPackageManager(repo(lock)).filteredWithDeps).toBe("function");
+    }
+  });
+});
