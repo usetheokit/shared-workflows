@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [dep-check 0.4.0] - 2026-08-27
+
+### Fixed
+
+- The range-floor leg builds the repository before running its suite. It reinstalled at the
+  floor and went straight to the tests, so the suite ran against a tree with no `dist/` —
+  an arrangement no CI in this ecosystem produces. `theokit-tui` failed its publish-contract
+  test on `publint --strict`, and `theokit` reported `SKIP: dist/index.js not found (run
+  pnpm build first)` alongside TS2307s for subpaths that exist only once built. Neither
+  failure was about a declared range, and both read as one (#7)
+
+### Added
+
+- `dep-check build-command`, which prints the repository's build command — `build` when it
+  exists, `build:packages` otherwise, and nothing at all for a repository that does not
+  build, so the step is skipped rather than failed (#7)
+
 ## [dep-check 0.3.0] - 2026-08-27
 
 ### Fixed

@@ -52,3 +52,17 @@ export function pinOverrides(repoRoot, overrides) {
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   return { manager: detected.manager, field: detected.overridesPath.join("."), written: overrides };
 }
+
+/**
+ * The build script this repository runs before its tests, or null if it has none.
+ *
+ * `build` wins over `build:packages` when both exist: it is the one that produces
+ * everything a consumer sees, and a repository needing the narrower one can say so
+ * explicitly rather than have the choice guessed.
+ */
+export function detectBuildScript(repoRoot) {
+  const manifestPath = join(repoRoot, "package.json");
+  if (!existsSync(manifestPath)) return null;
+  const scripts = JSON.parse(readFileSync(manifestPath, "utf8")).scripts ?? {};
+  return ["build", "build:packages"].find((name) => scripts[name]) ?? null;
+}
