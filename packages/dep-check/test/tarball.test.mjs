@@ -1,62 +1,59 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { detectPackageManager } from "../src/package-manager.mjs";
 
-import { installFromTarball } from "../src/tarball.mjs";
-
-/*
- * Check D packs a package and installs the tarball. Which packer produces it is not a detail:
- * `workspace:` is pnpm's protocol and ONLY pnpm rewrites it into a real range while packing.
+/**
+ * The packer choice, which is the one decision in `installFromTarball` that can be wrong silently.
  *
- * Measured 2026-08-27 against usetheokit/theokit: the gate answered
+ * `npm pack` copies `"@theokit/sdk": "workspace:^"` into the tarball verbatim; only pnpm rewrites the
+ * workspace protocol at pack time. Packing a workspace member with npm therefore produces an artefact
+ * that installs NOWHERE — `EUNSUPPORTEDPROTOCOL` — and the check fails on the packer rather than on
+ * the package. Measured on theokit-sdk/packages/acp:
  *
- *   npm error code EUNSUPPORTEDPROTOCOL
- *   npm error Unsupported URL Type "workspace:": workspace:*
+ *     npm  pack -> "@theokit/sdk": "workspace:^"
+ *     pnpm pack -> "@theokit/sdk": "^4.58.0"
  *
- * for `theokit` and `@theokit/agents`. Packed with npm, the protocol survives verbatim into the
- * tarball's manifest, so installing it can only ever fail — for every package that depends on a
- * sibling. The gate was reporting its own packing step as a dependency defect, and it is a required
- * check, so it blocked a release that had nothing wrong with it.
+ * The bug that made this test necessary was not the choice itself but WHERE it looked: detection ran
+ * against the package directory, and in a workspace the lockfile lives at the root, so
+ * `packages/acp` has none and the code fell back to npm — the exact thing the detection existed to
+ * avoid. A fallback that lands on the failure mode is worse than no fallback.
  */
-
-const scratches = [];
-function workspacePackage() {
-  const dir = mkdtempSync(join(tmpdir(), "dep-check-fixture-"));
-  scratches.push(dir);
-  const pkg = join(dir, "packages", "leaf");
-  mkdirSync(pkg, { recursive: true });
-  // A pnpm workspace, because `pnpm pack` only rewrites the protocol inside one.
-  writeFileSync(join(dir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
-  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "root", private: true }));
-  mkdirSync(join(dir, "packages", "sib"), { recursive: true });
-  writeFileSync(
-    join(dir, "packages", "sib", "package.json"),
-    JSON.stringify({ name: "dep-check-fixture-sib", version: "1.0.0" }),
-  );
-  writeFileSync(
-    join(pkg, "package.json"),
-    JSON.stringify({
-      name: "dep-check-fixture-leaf",
+describe("which packer a workspace member gets", () => {
+  function workspace() {
+    const root = mkdtempSync(join(tmpdir(), "dep-check-ws-"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "root", private: true }));
+    writeFileSync(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    writeFileSync(join(root, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+    const pkg = join(root, "packages", "member");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({
+      name: "@scope/member",
       version: "1.0.0",
-      dependencies: { "dep-check-fixture-sib": "workspace:*" },
-    }),
-  );
-  return pkg;
-}
+      peerDependencies: { "@scope/core": "workspace:^" },
+    }));
+    return { root, pkg };
+  }
 
-afterAll(() => {
-  for (const d of scratches) rmSync(d, { recursive: true, force: true });
-});
+  it("test_the_package_directory_alone_cannot_answer_which_manager_packs", () => {
+    // The lockfile is at the ROOT. Asking the member directory returns null, and a `?? "npm"`
+    // fallback on that answer is how `workspace:^` reached a tarball.
+    const { pkg } = workspace();
+    expect(detectPackageManager(pkg)).toBeNull();
+  });
 
-describe("installFromTarball", () => {
-  it("test_does_not_report_a_workspace_protocol_as_a_dependency_defect", () => {
-    const result = installFromTarball({ packageDir: workspacePackage() });
+  it("test_the_repository_root_answers_pnpm_for_a_pnpm_workspace", () => {
+    const { root } = workspace();
+    expect(detectPackageManager(root).manager).toBe("pnpm");
+  });
 
-    // The sibling is not published, so the install genuinely cannot succeed — that is fine and not
-    // what this asserts. What must NOT appear is the protocol itself: seeing `workspace:` in the
-    // failure means the tarball carried it, which is the packer's doing and not the package's.
-    const surfaced = `${result.reason ?? ""}\n${result.detail ?? ""}`;
-    expect(surfaced).not.toMatch(/EUNSUPPORTEDPROTOCOL|Unsupported URL Type "workspace:"/);
+  it("test_an_npm_repository_still_answers_npm", () => {
+    // Not every repository is a pnpm workspace — @theokit/skills is on npm, and there `npm pack` is
+    // both correct and the only option. The fix must not hardcode pnpm.
+    const root = mkdtempSync(join(tmpdir(), "dep-check-npm-"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "solo", version: "1.0.0" }));
+    writeFileSync(join(root, "package-lock.json"), "{}");
+    expect(detectPackageManager(root).manager).toBe("npm");
   });
 });

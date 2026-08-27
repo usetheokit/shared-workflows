@@ -32,7 +32,7 @@ on:
           TOOL is a semver artifact, so a behaviour change is a version bump somebody reviewed.
           The pin lives here rather than in eleven callers.
         type: string
-        default: '0.1.1'
+        default: '0.3.0'
       run-floor-check:
         description: |
           Also run the suite against the BOTTOM of every declared sibling range, not only
@@ -129,11 +129,47 @@ jobs:
         run: npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" manifest --root repo
 
       - name: D — install the tarball as a consumer would
+        id: install-check
         if: ${{ inputs.run-install-check }}
         # Asks two questions, not one: does it install at all, and is there exactly one
         # copy of each sibling in the tree. The studio defect passed the first and failed
         # the second — npm installed two runtimes and hoisted the older one to the root.
         run: npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" install --root repo
+
+      - name: What this run actually checked
+        # A job that reports `success` with its expensive leg SKIPPED is indistinguishable, from
+        # outside, from a job that ran the leg and passed. Measured on theokit-sdk: step D had run
+        # twice and failed twice, and every other run was green — because the leg never executed.
+        # The red did not go away when the defect was fixed; it went away when the leg stopped
+        # running, and the summary line said `success` throughout.
+        #
+        # This does not fail the job — skipping is the intended behaviour on an ordinary push, and a
+        # gate that fails for doing what it was told teaches people to route around it. It makes the
+        # skip legible instead, in the log and in the run summary, so "green" can be read as either
+        # "checked and passed" or "did not check", which are different facts.
+        if: always()
+        env:
+          RAN_INSTALL: ${{ steps.install-check.outcome }}
+        run: |
+          set -euo pipefail
+          verdict() { [ "$1" = "skipped" ] && echo "NOT CHECKED (skipped)" || echo "$1"; }
+          {
+            echo "### Dependency gate — what ran"
+            echo ""
+            echo "| check | outcome |"
+            echo "| --- | --- |"
+            echo "| A · declared range vs installed version | success |"
+            echo "| D · tarball installs as a consumer, one copy per sibling | $(verdict "${RAN_INSTALL:-skipped}") |"
+            echo ""
+            if [ "${RAN_INSTALL:-skipped}" = "skipped" ]; then
+              echo "> The install leg is on for pull requests into \`main\` and for a \`full\` dispatch."
+              echo "> This run did not pack or install anything — a green here means check A passed,"
+              echo "> not that the published artefact was exercised."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${RAN_INSTALL:-skipped}" = "skipped" ]; then
+            echo "::notice title=Install leg not run::Check A passed. The tarball install (D) was skipped on this event; green here is not evidence the artefact installs."
+          fi
 
   floor:
     name: suite at the bottom of every declared range
