@@ -204,7 +204,7 @@ async function commandInstall(root) {
     const siblings = siblingReferences(pkg.manifest, isSibling)
       .filter((r) => r.field === "peerDependencies" && !/^(workspace|link|file|portal):/.test(r.range))
       .map((r) => `${r.dep}@latest`);
-    const result = installFromTarball({ packageDir: pkg.dir, alsoInstall: siblings });
+    const result = installFromTarball({ packageDir: pkg.dir, repoRoot: root, alsoInstall: siblings });
     if (!result.installed) {
       findings.push({ pkg: pkg.manifest.name, problem: result.reason, detail: result.detail });
     } else if (result.duplicates.length) {
@@ -217,7 +217,7 @@ async function commandInstall(root) {
   report({
     title: "D) install the tarball as a consumer would",
     findings,
-    note: "  Installed with npm, not pnpm: pnpm has defaulted strict-peer-dependencies to false since v8,\n  so a broken peer contract is only a warning there and this gate would pass on it.",
+    note: "  Packed with the workspace's own manager and installed with npm — two tools, two reasons.\n  Only pnpm rewrites `workspace:` at pack time, so npm-packed workspace members produce tarballs\n  that install nowhere. And pnpm has defaulted strict-peer-dependencies to false since v8, so\n  installing with it would pass on a broken peer contract no npm user can install.",
     columns: (f) => `${f.pkg.padEnd(28)} ${f.problem}${f.detail ? `\n      ${f.detail.replace(/\n/g, "\n      ")}` : ""}`,
   });
   return findings.length === 0 ? 0 : 1;

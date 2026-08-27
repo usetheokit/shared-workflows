@@ -13,20 +13,39 @@
  *   2. is there exactly one copy of each ecosystem sibling in the resulting tree
  *
  * A gate that only asks (1) reports green on the worse outcome.
+ *
+ * ## Pack with the workspace's manager, install with npm
+ *
+ * These are different tools for different reasons, and using one for both was a real defect: this
+ * packed with `npm pack`, which copies `"@theokit/sdk": "workspace:^"` into the tarball VERBATIM.
+ * Only pnpm rewrites the workspace protocol at pack time. So every package that depends on a sibling
+ * through `workspace:` produced an artefact that could not install anywhere —
+ * `EUNSUPPORTEDPROTOCOL` — and the check failed on the packer rather than on the package. Measured
+ * on theokit-sdk/packages/acp:
+ *
+ *     npm  pack -> "@theokit/sdk": "workspace:^"   (unusable)
+ *     pnpm pack -> "@theokit/sdk": "^4.58.0"       (what the registry actually receives)
+ *
+ * The INSTALL stays npm on purpose, which is the original reason and still holds: pnpm has defaulted
+ * `strict-peer-dependencies` to false since v8, so a broken peer contract is only a warning there and
+ * this gate would pass on a package no npm user can install.
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { duplicateSiblingCopies } from "./checks.mjs";
+import { detectPackageManager } from "./package-manager.mjs";
 
-function npm(args, cwd) {
+function run(cmd, args, cwd) {
   try {
-    return { ok: true, out: execFileSync("npm", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
+    return { ok: true, out: execFileSync(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
   } catch (error) {
     return { ok: false, out: (error.stdout ?? "") + (error.stderr ?? "") };
   }
 }
+
+const npm = (args, cwd) => run("npm", args, cwd);
 
 /**
  * Pack `packageDir`, install the tarball into an empty project alongside `alsoInstall`,
@@ -37,11 +56,16 @@ function npm(args, cwd) {
  * pass on a package no npm user can install. The stricter resolver is the one that
  * tells the truth about the published contract.
  */
-export function installFromTarball({ packageDir, alsoInstall = [], keep = false }) {
+export function installFromTarball({ packageDir, repoRoot, alsoInstall = [], keep = false }) {
   const scratch = mkdtempSync(join(tmpdir(), "dep-check-install-"));
   try {
-    const packed = npm(["pack", "--pack-destination", scratch, "--silent"], packageDir);
-    if (!packed.ok) return { installed: false, reason: "pack failed", detail: packed.out, duplicates: [] };
+    // Detected from the REPOSITORY ROOT, not from the package directory. In a workspace the lockfile
+    // lives at the root and `packages/acp` has none, so detecting from the package silently fell
+    // back to npm — which packs `workspace:^` verbatim and produces a tarball that installs
+    // nowhere. The fallback was doing the exact thing the detection existed to prevent.
+    const manager = detectPackageManager(repoRoot ?? packageDir)?.manager ?? "npm";
+    const packed = run(manager, ["pack", "--pack-destination", scratch], packageDir);
+    if (!packed.ok) return { installed: false, reason: `pack failed (${manager})`, detail: packed.out, duplicates: [] };
     const tarball = readdirSync(scratch).find((f) => f.endsWith(".tgz"));
     if (!tarball) return { installed: false, reason: "pack produced no tarball", detail: packed.out, duplicates: [] };
 
