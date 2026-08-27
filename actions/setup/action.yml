@@ -51,6 +51,11 @@ runs:
       # `corepack prepare pnpm@9.15.0` in four workflows while its manifest said 10.34.1, so every
       # gate there validated under a package manager no contributor used (usetheokit/theokit-sdk#415).
       uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      with:
+        # WHICH manifest, not which version. Without this the action reads `packageManager`
+        # from the checkout root and fails with "No pnpm version is specified" the moment the
+        # project lives in a subdirectory — measured, on the fixture in this repository.
+        package_json_file: ${{ inputs.working-directory }}/package.json
 
     - name: Setup Node
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
