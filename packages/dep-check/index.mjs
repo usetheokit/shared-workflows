@@ -172,16 +172,24 @@ async function commandRegistry(root) {
   const findings = [];
   for (const ref of refs) {
     const drift = ceilingDrift({ range: ref.range, latest: latest.get(ref.dep) });
-    if (drift) findings.push({ ...ref, ...drift, severity: ref.field === "peerDependencies" ? "contract" : "behind" });
+    if (!drift) continue;
+    // `ahead` outranks the peer/dependency distinction: a range the registry cannot satisfy at
+    // all means the package installs nowhere, which is worse than a stale contract.
+    const severity = drift.direction === "ahead" ? "unpublished" : ref.field === "peerDependencies" ? "contract" : "behind";
+    findings.push({ ...ref, ...drift, severity });
   }
   // A stale peer is a broken install contract for every consumer; a stale dependency
   // is just being a version behind, which is ordinary and what Renovate is for.
-  findings.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "contract" ? -1 : 1));
+  const rank = { unpublished: 0, contract: 1, behind: 2 };
+  findings.sort((a, b) => rank[a.severity] - rank[b.severity]);
   report({
     title: "C) declared range vs published latest",
     findings,
-    note: "  `contract` = a peer range that no longer admits latest: consumers cannot install this combination.\n  `behind`   = an ordinary dependency one or more versions back.",
-    columns: (f) => `[${f.severity}] ${f.pkg.padEnd(26)} ${f.dep.padEnd(22)} ${f.range.padEnd(18)} latest ${f.latest} (${f.majorsBehind} major${f.majorsBehind === 1 ? "" : "s"} behind)`,
+    note: "  `unpublished` = the range's floor is ABOVE latest: no published version satisfies it, so this\n                  package installs nowhere until the sibling publishes. Expected mid-way through a\n                  two-release change, and a defect if it outlives one.\n  `contract`    = a peer range that no longer admits latest: consumers cannot install this combination.\n  `behind`      = an ordinary dependency one or more versions back.",
+    columns: (f) =>
+      f.direction === "ahead"
+        ? `[${f.severity}] ${f.pkg.padEnd(26)} ${f.dep.padEnd(22)} ${f.range.padEnd(18)} latest ${f.latest} (nothing published satisfies this yet)`
+        : `[${f.severity}] ${f.pkg.padEnd(26)} ${f.dep.padEnd(22)} ${f.range.padEnd(18)} latest ${f.latest} (${f.majorsBehind} major${f.majorsBehind === 1 ? "" : "s"} behind)`,
   });
   return 0; // never blocks — see the header
 }

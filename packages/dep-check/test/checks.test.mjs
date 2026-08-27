@@ -195,6 +195,38 @@ describe("groupUntestedFloors — the extra runs needed to exercise what the int
   });
 });
 
+describe("ceilingDrift — a range ahead of the registry is not a range behind it", () => {
+  // A two-release change declares the new floor before the version exists: the satellite says
+  // `>=4.60.0` while the registry is at `4.59.0`. That is a real, temporary state — the package
+  // cannot be installed by anyone until the SDK publishes — and the gate should say so.
+  //
+  // It did say something, and it said the opposite: `0 majors behind`, for a range that is ahead.
+  // The measurement was right and the label described its mirror image.
+
+  it("test_reports_a_range_the_registry_cannot_satisfy_yet_as_ahead", () => {
+    const drift = ceilingDrift({ range: ">=4.60.0", latest: "4.59.0" });
+    expect(drift).toBeTruthy();
+    expect(drift.direction).toBe("ahead");
+  });
+
+  it("test_still_reports_an_ordinary_stale_range_as_behind", () => {
+    const drift = ceilingDrift({ range: "^3.0.0", latest: "4.59.0" });
+    expect(drift.direction).toBe("behind");
+    expect(drift.majorsBehind).toBe(1);
+  });
+
+  it("test_says_nothing_when_the_range_admits_latest", () => {
+    expect(ceilingDrift({ range: ">=4.0.0", latest: "4.59.0" })).toBeNull();
+  });
+
+  it("test_an_ahead_range_does_not_claim_a_majors_behind_count", () => {
+    // `0 majors behind` on a range that is ahead is the label that made this worth fixing:
+    // a reader scanning the column sees a number that says "up to date, roughly".
+    const drift = ceilingDrift({ range: ">=4.60.0", latest: "4.59.0" });
+    expect(drift.majorsBehind).toBeUndefined();
+  });
+});
+
 describe("unpublishedSiblings — what check D cannot get from the registry yet", () => {
   // A version pull request bumps a package and a sibling it depends on in the same cut.
   // `pnpm pack` rewrites `workspace:^` to the NEW local version, correctly, and the registry

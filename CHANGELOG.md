@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [dep-check 0.9.0] - 2026-08-27
+
+### Fixed
+
+- Check C distinguishes a range that is **ahead** of the registry from one that is behind it. Both
+  miss `latest`, and they are opposite problems: behind means the range stopped at an older major,
+  ahead means its floor is above everything published, so the package installs nowhere. The second
+  was reported as `0 majors behind` — a reader scanning the column saw a number that reads as
+  "roughly up to date" for a package no consumer can install (#24)
+
+  It has a name of its own now, `unpublished`, and sorts above `contract`: a range the registry
+  cannot satisfy at all is worse than a stale one. It is the expected state mid-way through a
+  two-release change — a satellite declaring the floor it will need before the sibling publishes —
+  and a defect if it outlives one, which is exactly the distinction the label has to carry.
+
+
 ## [dep-check 0.8.0] - 2026-08-27
 
 ### Fixed
