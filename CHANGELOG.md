@@ -1,0 +1,46 @@
+# Changelog
+
+Changes to the reusable workflows, composite actions and the `@theokit/dep-check`
+package this repository publishes.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [dep-check 0.3.0] - 2026-08-27
+
+### Fixed
+
+- The range-floor leg no longer pins a sibling to a version some consumer's own range
+  excludes. When several packages in one workspace declared different ranges for the same
+  sibling, it took the lowest individual floor and wrote it as a single global override —
+  so a package declaring `^0.2.0` had its suite run against `0.1.1` and was reported as
+  broken for a combination no installer would resolve. The floor is now the bottom of the
+  intersection: the lowest published version every declared range admits. Measured on
+  `usetheokit/theokit-di`, where `@theokit/di-agent` declares `>=0.1.1 <0.3` and
+  `@theokit/orm` declares `^0.2.0` — the leg now pins `0.2.0` rather than `0.1.1` (#4)
+- A sibling whose declared ranges share no published version is reported and left unpinned
+  instead of silently resolved in favour of one of them. A workspace that cannot be
+  installed as declared is a finding, not something for the floor leg to arbitrate (#4)
+
+## [dep-check 0.2.0] - 2026-08-27
+
+### Fixed
+
+- The tarball the install leg tests is packed with the workspace's own package manager,
+  detected from the repository root rather than from the package directory. In a workspace
+  the lockfile sits at the root, so detecting from the package fell back to npm — which
+  copies `workspace:` ranges verbatim and produces a tarball that installs nowhere. Every
+  `workspace:`-depending package was reported as an install failure (#1)
+- A run whose install leg was skipped no longer reads as one where it passed. The job
+  writes what it actually checked to the step summary and emits a notice when a leg did
+  not run (#1)
+
+## [dep-check 0.1.0] - 2026-08-26
+
+### Added
+
+- First release. Checks declared sibling ranges against what is installed, against the
+  registry, against the bottom of each declared range, and against a tarball installed the
+  way a consumer would install it.

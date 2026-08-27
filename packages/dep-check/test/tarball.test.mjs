@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectPackageManager } from "../src/package-manager.mjs";
+import { installFromTarball } from "../src/tarball.mjs";
 
 /**
  * The packer choice, which is the one decision in `installFromTarball` that can be wrong silently.
@@ -55,5 +56,21 @@ describe("which packer a workspace member gets", () => {
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "solo", version: "1.0.0" }));
     writeFileSync(join(root, "package-lock.json"), "{}");
     expect(detectPackageManager(root).manager).toBe("npm");
+  });
+
+  it("test_never_surfaces_the_workspace_protocol_as_a_dependency_defect", () => {
+    // The three tests above pin the DECISION. This one runs the whole path, because the decision
+    // being right in isolation is not what broke: `installFromTarball` was asking the package
+    // directory rather than the root, and no unit test of `detectPackageManager` could see that.
+    //
+    // The sibling here is unpublished, so the install genuinely cannot succeed — that is fine and
+    // not what this asserts. What must never appear is the protocol itself. `workspace:` reaching
+    // the install means the tarball carried it, which is the packer's doing and not the package's.
+    const { root, pkg } = workspace();
+
+    const result = installFromTarball({ packageDir: pkg, repoRoot: root });
+
+    const surfaced = `${result.reason ?? ""}\n${result.detail ?? ""}`;
+    expect(surfaced).not.toMatch(/EUNSUPPORTEDPROTOCOL|Unsupported URL Type "workspace:"/);
   });
 });
