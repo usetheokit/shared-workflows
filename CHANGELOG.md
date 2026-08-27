@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `v1` follows `main`, not only releases. The release moves it after a publish, which covers a
+  change that bumps the package — and not a change to the workflows themselves. The full-depth
+  checkout, the build step, the per-package floor runs and the stable result check all landed on
+  `main` with no version bump, and every one had to be pushed to `v1` by hand or it reached no
+  consumer. Same class as #13: shipped, green, not delivered.
+
+  It holds when the pinned `dep-check-version` is not on the registry yet, which is the state a
+  version bump lands in before its tag: moving there would send consumers to
+  `npx @theokit/dep-check@<unpublished>`, a failure at the point of use rather than a stale one
+  (#15)
+
+
 ### Added
 
 - `floors the shared pin cannot reach — result`, a check with a stable name that reports whether
