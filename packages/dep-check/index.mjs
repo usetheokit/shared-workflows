@@ -21,8 +21,7 @@
  * none of the other three mean anything either.
  */
 import { parseArgs } from "node:util";
-import semver from "semver";
-import { ceilingDrift, consumersLeftBehind, installedDrift, isSibling, rangeFloor } from "./src/checks.mjs";
+import { ceilingDrift, consumersLeftBehind, installedDrift, isSibling, rangeFloor, sharedFloor } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
 import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
 import { detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
@@ -311,19 +310,34 @@ async function commandImpact(root) {
  * same class of claim as declaring `^7.6.0` while testing 7.6.0 — true about one
  * point, asserted about a span. This is what makes the bottom of the span real.
  *
- * When several packages in a workspace declare different floors for the same sibling,
- * the LOWEST wins: it is the one an installer could actually resolve for the whole
- * tree, and the one nothing else is testing.
+ * When several packages in a workspace declare different ranges for the same sibling,
+ * the floor is the bottom of their INTERSECTION. The override is one global value, so
+ * it has to be a version all of them admit; pinning the lowest individual floor puts a
+ * consumer on a version its own range excludes and then blames it for failing there.
+ *
+ * A sibling whose declared ranges share no published version is skipped rather than
+ * pinned, and reported — the workspace cannot be installed as declared, which is a
+ * finding of its own and not something to resolve by picking a side.
  */
 async function lowestFloors(root) {
-  const lowest = new Map();
+  const ranges = new Map();
   for (const ref of collectReferences(root)) {
-    const floor = rangeFloor(ref.range, await publishedVersions(ref.dep));
-    if (!floor) continue;
-    const current = lowest.get(ref.dep);
-    if (!current || semver.lt(floor, current)) lowest.set(ref.dep, floor);
+    if (!ranges.has(ref.dep)) ranges.set(ref.dep, []);
+    ranges.get(ref.dep).push(ref.range);
   }
-  return Object.fromEntries([...lowest.entries()].sort());
+  const floors = new Map();
+  const irreconcilable = [];
+  for (const [dep, declared] of ranges) {
+    const floor = sharedFloor(declared, await publishedVersions(dep));
+    if (floor) floors.set(dep, floor);
+    else if (declared.filter((r) => r && !/^(workspace|file|link):/.test(r)).length > 1) {
+      irreconcilable.push({ dep, declared });
+    }
+  }
+  for (const { dep, declared } of irreconcilable) {
+    console.log(`  note: ${dep} is declared as ${declared.join(" and ")}, which share no published version — not pinned`);
+  }
+  return Object.fromEntries([...floors.entries()].sort());
 }
 
 async function commandFloorOverrides(root) {

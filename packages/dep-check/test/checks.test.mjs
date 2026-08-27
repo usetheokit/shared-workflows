@@ -6,6 +6,7 @@ import {
   installedDrift,
   isSibling,
   rangeFloor,
+  sharedFloor,
 } from "../src/checks.mjs";
 
 describe("isSibling", () => {
@@ -101,6 +102,38 @@ describe("rangeFloor — check B: which published version is the bottom of the r
 
   it("test_skips_prereleases_so_the_floor_leg_does_not_run_on_a_next_tag", () => {
     expect(rangeFloor(">=5.0.0", published)).toBeNull();
+  });
+});
+
+describe("sharedFloor — the floor a workspace can actually install", () => {
+  const published = ["0.1.0", "0.1.1", "0.2.0"];
+
+  it("test_returns_the_lowest_version_every_declared_range_admits", () => {
+    // Two packages in one workspace, two different ranges for the same sibling. The
+    // override is a single global value, so the only honest floor is one BOTH accept.
+    expect(sharedFloor([">=0.1.1 <0.3", "^0.2.0"], published)).toBe("0.2.0");
+  });
+
+  it("test_never_pins_below_a_declared_range_just_because_a_sibling_allows_it", () => {
+    // The defect this replaced: taking the lowest INDIVIDUAL floor pinned 0.1.1 —
+    // outside `^0.2.0` — and ran the suite on a combination no installer would resolve.
+    // The red it produced was about the gate, not about the packages.
+    expect(sharedFloor([">=0.1.1 <0.3", "^0.2.0"], published)).not.toBe("0.1.1");
+  });
+
+  it("test_a_single_range_behaves_exactly_as_the_single_range_floor", () => {
+    expect(sharedFloor(["^0.1.0 || ^0.2.0"], published)).toBe(rangeFloor("^0.1.0 || ^0.2.0", published));
+  });
+
+  it("test_ignores_workspace_protocol_ranges_which_pin_nothing", () => {
+    expect(sharedFloor(["workspace:*", "^0.2.0"], published)).toBe("0.2.0");
+  });
+
+  it("test_returns_null_when_the_declared_ranges_share_no_published_version", () => {
+    // Mutually exclusive ranges in one workspace are a real defect, but the floor leg
+    // is not the place to pick a winner. Returning null lets the caller report it as
+    // what it is instead of silently testing one side.
+    expect(sharedFloor(["^0.1.0", "^0.2.0"], published)).toBeNull();
   });
 });
 

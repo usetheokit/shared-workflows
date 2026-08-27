@@ -94,6 +94,30 @@ export function rangeFloor(range, publishedVersions) {
 }
 
 /**
+ * The floor for a sibling that SEVERAL packages in one workspace declare.
+ *
+ * The override the floor leg writes is a single global value, so it has to be a version
+ * every declared range admits — the bottom of their intersection, not the bottom of any
+ * one of them. Taking the lowest individual floor pins a version that some consumer's
+ * own range excludes, and then runs that consumer's suite there: a combination no
+ * installer would ever resolve, failing for a reason the packages are not responsible
+ * for. Measured on `usetheokit/theokit-di`, where `@theokit/di-agent` declares
+ * `>=0.1.1 <0.3` and `@theokit/orm` declares `^0.2.0` — the lowest-wins rule pinned
+ * 0.1.1, outside the ORM's range, and reported the ORM as broken.
+ *
+ * Returns null when the ranges share no published version. That is a real defect —
+ * the workspace cannot be installed as declared — but it belongs to whoever reads the
+ * result, not to a rule here that silently picks a side.
+ */
+export function sharedFloor(ranges, publishedVersions) {
+  const declared = ranges.filter((r) => r && !LOCAL_PROTOCOL.test(r));
+  if (!declared.length) return null;
+  const stable = publishedVersions.filter((v) => !semver.prerelease(v));
+  const admitted = stable.filter((v) => declared.every((r) => semver.satisfies(v, r)));
+  return admitted.length ? semver.sort(admitted)[0] : null;
+}
+
+/**
  * The reverse check — run by the PUBLISHER before cutting a major.
  *
  * Every other check lives in the consumer, and therefore fires after the fact: the
