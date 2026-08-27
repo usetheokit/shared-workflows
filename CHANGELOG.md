@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The gate runs the `@theokit/dep-check` version that was just released. `0.5.0` published to npm
+  while the workflow's `dep-check-version` default stayed at `0.4.0` and the `v1` tag stayed on the
+  commit before it, so no consumer received the release — the floor leg went on not naming its
+  untested floors. Second time the moving ref has been left behind after a publish; the first was
+  `0.2.0` (#13)
+
+### Added
+
+- The release refuses to publish a version the gate does not run. `release.yml` now compares the
+  manifest version against the `dep-check-version` default in `dep-check.yml` and fails when they
+  disagree, which is the state `0.5.0` published in. It guards the pin; moving `v1` is a separate
+  step and a separate failure (#13)
+
+
 ## [dep-check 0.5.0] - 2026-08-27
 
 ### Added
