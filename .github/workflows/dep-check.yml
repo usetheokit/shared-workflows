@@ -180,6 +180,11 @@ jobs:
       - name: Checkout the repository under test
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The suite runs here, and a suite can consult history. `theokit-tui`'s
+          # never-weaken guard diffs against a base SHA; at depth 1 that SHA is not in the
+          # clone and the test fails on `git diff`, not on a range. Its own CI checks out
+          # at depth 0 for exactly this reason.
+          fetch-depth: 0
           path: repo
           persist-credentials: false
 

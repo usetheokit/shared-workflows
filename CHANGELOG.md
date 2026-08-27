@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The range-floor job checks out at full depth. It used the default depth of 1, so a suite that
+  consults git history failed on the clone rather than on a range — `theokit-tui`'s never-weaken
+  guard diffs against a base SHA that a shallow clone does not contain. Its own CI checks out at
+  depth 0 for exactly this reason. Workflow-only change; no new `@theokit/dep-check` release (#9)
+
 ## [dep-check 0.4.0] - 2026-08-27
 
 ### Fixed
