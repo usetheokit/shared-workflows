@@ -20,8 +20,18 @@
 # Automatic Analysis does not import coverage: "Code coverage information is not supported"
 # (SonarQube Cloud docs, Automatic Analysis). It is otherwise fine, and it is what runs today. A
 # caller that adopts this workflow is choosing to trade a zero-config scan for one that knows how
-# much of the code its tests actually reach — and SonarCloud disables Automatic Analysis for a
-# project as soon as a CI-based analysis reports, so the two do not run twice over one commit.
+# much of the code its tests actually reach.
+#
+# ADOPTING THIS REQUIRES TURNING AUTOMATIC ANALYSIS OFF FIRST, per project, under
+# Administration > Analysis Method. The scanner refuses to run alongside it rather than taking
+# over:
+#
+#     [ERROR] ScannerEngine: You are running CI analysis while Automatic Analysis is enabled.
+#             Please consider disabling one or the other.
+#
+# An earlier version of this comment claimed SonarCloud disables Automatic Analysis on its own as
+# soon as a CI analysis reports. It does not — measured on theokit-tui, where the step failed with
+# exactly the error above until the toggle was switched off by hand.
 name: SonarQube Cloud
 
 on:
