@@ -57,6 +57,23 @@ on:
         description: 'Override when the repository does not install with a frozen pnpm lockfile.'
         type: string
         default: ''
+      coverage-artifact:
+        description: |
+          Name of an artifact an earlier job in this same run uploaded, holding the lcov files the
+          caller's `sonar-project.properties` names. Downloaded into `coverage/` INSTEAD of running
+          the tests again.
+
+          Use it when reproducing the coverage run here would mean reproducing its whole
+          environment — theokit needs a sibling repository checked out and built, native bindings
+          rebuilt and bubblewrap installed before its suite loads. Re-deriving that recipe here
+          would be a second copy of it, free to drift from the first.
+
+          It is also the more honest number: what Sonar reports is then literally what the caller's
+          own coverage gate measured, not a second run that could disagree with it.
+
+          Mutually exclusive with `coverage-command`.
+        type: string
+        default: ''
       build-command:
         description: |
           Run before the coverage command. A workspace whose packages import each other through
@@ -127,6 +144,21 @@ jobs:
         if: steps.token.outputs.present == 'true'
         with:
           node-version: ${{ inputs.node-version }}
+
+      # Fail fast rather than letting one silently win: a caller that sets both holds a belief
+      # about which coverage the report describes, and half of that belief would be wrong.
+      - name: Refuse a caller that asks for coverage twice
+        if: inputs.coverage-command != '' && inputs.coverage-artifact != ''
+        run: |
+          echo "::error title=SonarQube Cloud::coverage-command and coverage-artifact are mutually exclusive."
+          exit 1
+
+      - name: Download the coverage the caller already measured
+        if: steps.token.outputs.present == 'true' && inputs.coverage-artifact != ''
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.coverage-artifact }}
+          path: coverage
 
       - name: Install
         if: steps.token.outputs.present == 'true' && inputs.coverage-command != ''

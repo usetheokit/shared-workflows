@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matrix of `['22.12', '22']`. The condition was never true, the step reported `skipped` on every
   run for two months, and a skipped step is indistinguishable from a passing one in the checks list.
 
+- `sonar.yml` inputs `build-command` and `coverage-artifact`, both for the same defect: a scan that
+  passes while measuring nothing. `theokit-sdk`'s first run reported `No coverage information will
+  be saved because all LCOV files cannot be found` — its packages import each other through their
+  published entry points, so nine suites failed to load before `pnpm build` had run.
+  `build-command` runs first; `coverage-artifact` downloads coverage an earlier job already
+  uploaded, for callers whose suite needs an environment (a sibling repository built from source,
+  native bindings, bubblewrap) that reproducing here would only duplicate. The two coverage inputs
+  are mutually exclusive and the workflow refuses a caller that sets both.
+
 ## [dep-check 0.9.1] - 2026-08-27
 
 ### Fixed
