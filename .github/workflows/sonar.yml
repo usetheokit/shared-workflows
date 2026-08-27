@@ -57,6 +57,18 @@ on:
         description: 'Override when the repository does not install with a frozen pnpm lockfile.'
         type: string
         default: ''
+      build-command:
+        description: |
+          Run before the coverage command. A workspace whose packages import each other through
+          their published entry points needs `dist/` to exist before any test can import them —
+          measured on theokit-sdk, where the coverage run failed with
+          `Failed to resolve entry for package "@theokit/sdk"` and three assertions reading
+          `missing dist/index.js — run 'pnpm build'`. The scan still completed, silently, with no
+          coverage at all.
+
+          Leave empty for repositories that test from source.
+        type: string
+        default: ''
     secrets:
       SONAR_TOKEN:
         description: |
@@ -130,9 +142,24 @@ jobs:
             npm ci
           fi
 
+      # Built before coverage, when the caller asks for it. Not folded into `coverage-command`
+      # because the two fail for different reasons and deserve separate lines in the log.
+      - name: Build
+        if: steps.token.outputs.present == 'true' && inputs.build-command != ''
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: |
+          echo "::group::build"
+          eval "${BUILD_COMMAND}"
+          echo "::endgroup::"
+
       # Coverage failing must not fail the analysis. The caller's own test job is what gates the
       # suite; here a broken coverage run should cost the coverage NUMBER, not the whole scan —
       # otherwise one flaky test takes the security findings down with it.
+      #
+      # It is a WARNING and not a silence: theokit-sdk's first run passed both checks while
+      # reporting no coverage at all, because the command failed for a reason (`missing
+      # dist/index.js`) that only the log carried.
       - name: Coverage
         if: steps.token.outputs.present == 'true' && inputs.coverage-command != ''
         continue-on-error: true
