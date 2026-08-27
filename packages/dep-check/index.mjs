@@ -21,7 +21,7 @@
  * none of the other three mean anything either.
  */
 import { parseArgs } from "node:util";
-import { ceilingDrift, consumersLeftBehind, installedDrift, isSibling, rangeFloor, sharedFloor } from "./src/checks.mjs";
+import { ceilingDrift, consumersLeftBehind, installedDrift, isSibling, rangeFloor, sharedFloor, untestedFloors } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
 import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
 import { detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
@@ -324,19 +324,40 @@ async function lowestFloors(root) {
   const ranges = new Map();
   for (const ref of collectReferences(root)) {
     if (!ranges.has(ref.dep)) ranges.set(ref.dep, []);
-    ranges.get(ref.dep).push(ref.range);
+    ranges.get(ref.dep).push({ pkg: ref.pkg, range: ref.range });
   }
   const floors = new Map();
   const irreconcilable = [];
-  for (const [dep, declared] of ranges) {
-    const floor = sharedFloor(declared, await publishedVersions(dep));
+  const untested = [];
+  for (const [dep, declarations] of ranges) {
+    const versions = await publishedVersions(dep);
+    const floor = sharedFloor(declarations.map((d) => d.range), versions);
     if (floor) floors.set(dep, floor);
-    else if (declared.filter((r) => r && !/^(workspace|file|link):/.test(r)).length > 1) {
-      irreconcilable.push({ dep, declared });
+    else if (declarations.filter((d) => d.range && !/^(workspace|file|link):/.test(d.range)).length > 1) {
+      irreconcilable.push({ dep, declared: declarations.map((d) => d.range) });
+    }
+    for (const gap of untestedFloors({ declarations, pinned: floor, publishedVersions: versions })) {
+      untested.push({ dep, ...gap });
     }
   }
   for (const { dep, declared } of irreconcilable) {
     console.log(`  note: ${dep} is declared as ${declared.join(" and ")}, which share no published version — not pinned`);
+  }
+  // Printed with the pins rather than kept for a caller, because the reader who needs it is the
+  // one looking at a green floor leg and inferring more coverage than it has (#6).
+  //
+  // Grouped by the floor going untested, not listed per package: `theokit-plugins` has fourteen
+  // packages declaring `theokit >=0.50.1`, and fourteen identical lines is a note nobody finishes
+  // reading — the same reason the check exists is the reason it has to stay legible.
+  const byFloor = new Map();
+  for (const gap of untested) {
+    const key = `${gap.dep}\u0000${gap.claims}\u0000${gap.tested}`;
+    if (!byFloor.has(key)) byFloor.set(key, { ...gap, packages: [] });
+    byFloor.get(key).packages.push(gap.pkg);
+  }
+  for (const gap of byFloor.values()) {
+    const who = gap.packages.length === 1 ? gap.packages[0] : `${gap.packages.length} packages (${gap.packages.join(", ")})`;
+    console.log(`  note: ${who} declare${gap.packages.length === 1 ? "s" : ""} ${gap.dep} ${gap.range}, whose floor ${gap.claims} is NOT exercised — the leg installs ${gap.tested}, the bottom of the intersection with the other declared ranges`);
   }
   return Object.fromEntries([...floors.entries()].sort());
 }

@@ -7,6 +7,7 @@ import {
   isSibling,
   rangeFloor,
   sharedFloor,
+  untestedFloors,
 } from "../src/checks.mjs";
 
 describe("isSibling", () => {
@@ -215,5 +216,53 @@ describe("duplicateSiblingCopies — check D: one runtime, or two?", () => {
       },
     };
     expect(duplicateSiblingCopies(tree)).toEqual([]);
+  });
+});
+
+describe("untestedFloors — which declared floors the intersection floor never installs", () => {
+  const published = ["0.1.0", "0.1.1", "0.2.0"];
+
+  it("test_names_the_package_whose_own_floor_is_below_the_pinned_one", () => {
+    // The measured case (usetheokit/theokit-di): the intersection is 0.2.0, so
+    // `@theokit/di-agent`'s promise about 0.1.1 stops being verified by anything.
+    const declarations = [
+      { pkg: "@theokit/di-agent", range: ">=0.1.1 <0.3" },
+      { pkg: "@theokit/orm", range: "^0.2.0" },
+    ];
+    expect(untestedFloors({ declarations, pinned: "0.2.0", publishedVersions: published })).toEqual([
+      { pkg: "@theokit/di-agent", range: ">=0.1.1 <0.3", claims: "0.1.1", tested: "0.2.0" },
+    ]);
+  });
+
+  it("test_says_nothing_when_every_declared_floor_is_the_pinned_one", () => {
+    // Agreement is the common case and must stay silent — a note that fires on every
+    // repository is a note nobody reads by the third one.
+    const declarations = [
+      { pkg: "@theokit/orm", range: "^0.2.0" },
+      { pkg: "@theokit/di-agent", range: "^0.2.0" },
+    ];
+    expect(untestedFloors({ declarations, pinned: "0.2.0", publishedVersions: published })).toEqual([]);
+  });
+
+  it("test_ignores_a_range_that_admits_nothing_published", () => {
+    // `^9.0.0` against a package that never reached 9 has no floor to leave untested.
+    // It IS a defect, and it is reported by the check that owns it — repeating it here
+    // as "untested floor" would name the wrong problem.
+    const declarations = [{ pkg: "@theokit/ghost", range: "^9.0.0" }];
+    expect(untestedFloors({ declarations, pinned: "0.2.0", publishedVersions: published })).toEqual([]);
+  });
+
+  it("test_reports_nothing_when_no_version_was_pinned_at_all", () => {
+    // Ranges sharing no published version are skipped by `sharedFloor` rather than
+    // pinned. With nothing installed there is no floor to be below.
+    const declarations = [{ pkg: "@theokit/di-agent", range: ">=0.1.1 <0.3" }];
+    expect(untestedFloors({ declarations, pinned: null, publishedVersions: published })).toEqual([]);
+  });
+
+  it("test_a_package_declaring_a_HIGHER_floor_is_not_a_finding", () => {
+    // Its floor is the one being tested, or above it — either way the promise it makes
+    // is not the one going unverified.
+    const declarations = [{ pkg: "@theokit/orm", range: "^0.2.0" }];
+    expect(untestedFloors({ declarations, pinned: "0.1.1", publishedVersions: published })).toEqual([]);
   });
 });

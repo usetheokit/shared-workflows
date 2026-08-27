@@ -118,6 +118,33 @@ export function sharedFloor(ranges, publishedVersions) {
 }
 
 /**
+ * The declared floors the intersection floor does NOT exercise.
+ *
+ * `sharedFloor` pins one version every range admits, which is the only value a single global
+ * override can honestly take. The consequence is that when two packages declare different ranges
+ * for the same sibling, only the HIGHER floor is ever installed — the lower one stops being tested
+ * while still being promised. On `usetheokit/theokit-di`, `@theokit/di-agent` declares
+ * `>=0.1.1 <0.3` and nothing verifies 0.1.1 any more; on `usetheokit/theokit-sdk`, four packages
+ * declare `>=4.0.0` and only 4.19.3 runs.
+ *
+ * This does not close the gap — closing it means installing each package against its own floor,
+ * which is N installs and a different job shape. It names the gap, so a green check is not read as
+ * coverage it does not have. A gate that quietly tests less than it appears to is the failure mode
+ * the floor leg exists to prevent, turned on itself.
+ */
+export function untestedFloors({ declarations, pinned, publishedVersions }) {
+  if (!pinned) return [];
+  const untested = [];
+  for (const { pkg, range } of declarations) {
+    const claims = rangeFloor(range, publishedVersions);
+    // `null` is a range admitting nothing published — a finding of its own, reported
+    // elsewhere; equal-or-higher means the pinned version IS this package's floor.
+    if (claims && semver.lt(claims, pinned)) untested.push({ pkg, range, claims, tested: pinned });
+  }
+  return untested;
+}
+
+/**
  * The reverse check — run by the PUBLISHER before cutting a major.
  *
  * Every other check lives in the consumer, and therefore fires after the fact: the

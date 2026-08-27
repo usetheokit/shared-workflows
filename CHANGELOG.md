@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The range-floor leg names the declared floors it does NOT exercise. It pins the bottom of the
+  intersection of every declared range, which is the only version a single global override can
+  honestly take — and the consequence is that when two packages declare different ranges for the
+  same sibling, only the higher floor is ever installed. `@theokit/di-agent` promises
+  `@theokit/di >=0.1.1` and nothing verified 0.1.1; four packages in `theokit-sdk` promise
+  `>=4.0.0` and only 4.19.3 ran. The gap is not closed — closing it means installing each package
+  against its own floor, N installs and a different job shape — but it is no longer invisible, so
+  a green leg is not read as coverage it does not have (#6)
+
 ### Fixed
 
 - The range-floor job checks out at full depth. It used the default depth of 1, so a suite that
