@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [dep-check 0.5.0] - 2026-08-27
+
 ### Added
 
 - The range-floor leg names the declared floors it does NOT exercise. It pins the bottom of the
@@ -24,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The range-floor job checks out at full depth. It used the default depth of 1, so a suite that
   consults git history failed on the clone rather than on a range — `theokit-tui`'s never-weaken
   guard diffs against a base SHA that a shallow clone does not contain. Its own CI checks out at
-  depth 0 for exactly this reason. Workflow-only change; no new `@theokit/dep-check` release (#9)
+  depth 0 for exactly this reason. Workflow-only — it needed no release of its own, and ships
+  here because this one carries it (#9)
 
 ## [dep-check 0.4.0] - 2026-08-27
 
