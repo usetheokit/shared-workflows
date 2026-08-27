@@ -2,8 +2,9 @@
 #
 #   jobs:
 #     sonar:
-#       uses: usetheokit/shared-workflows/.github/workflows/sonar.yml@v1
-#       secrets: inherit
+#       uses: usetheokit/shared-workflows/.github/workflows/sonar.yml@v1 # zizmor: ignore[unpinned-uses]
+#       secrets:
+#         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 #       with:
 #         coverage-command: pnpm test:coverage
 #
@@ -56,6 +57,16 @@ on:
         description: 'Override when the repository does not install with a frozen pnpm lockfile.'
         type: string
         default: ''
+    secrets:
+      SONAR_TOKEN:
+        description: |
+          SonarCloud analysis token. Declared rather than inherited: `secrets: inherit` hands this
+          workflow EVERY secret the caller holds, and zizmor flags it for that reason. Naming the
+          one secret it needs is the difference between a scanner that can publish an analysis and
+          a scanner that could publish anything.
+
+          Optional, so a repository without the secret still runs the job — it warns and skips.
+        required: false
 
 # One analysis per ref. Two scans of the same commit race for the same server-side report, and the
 # loser overwrites the winner with an identical result — wasted minutes, and a confusing history.
