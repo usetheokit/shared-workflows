@@ -175,3 +175,79 @@ jobs:
             echo "accepted ${good} — correct"
           done
 
+
+  # `v1` is the ref every consumer resolves, and a change that does not reach it did not ship.
+  #
+  # The release moves it after a publish (release.yml), which covers a change that bumps the
+  # package. It does NOT cover a change to the workflows themselves — the full-depth checkout, the
+  # build step, the per-package floor runs all landed on `main` without a version bump, and each
+  # one had to be pushed to `v1` by hand. Same class as #13: shipped, green, and not delivered.
+  #
+  # So `v1` follows `main`, with one condition.
+  advance-v1:
+    name: advance v1 to main
+    needs: [test, setup-action, npm-oidc-action]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The pinned dep-check version must exist on the registry
+        # The condition. A commit that bumps `dep-check-version` lands on `main` BEFORE the tag
+        # that publishes it, so moving `v1` there would send every consumer to
+        # `npx @theokit/dep-check@<unpublished>` — a failure at the point of use, worse than
+        # lagging. When that is the case this job holds, and release.yml's `advance-v1` moves the
+        # ref once the publish succeeds.
+        id: check
+        run: |
+          set -euo pipefail
+          pinned="$(awk '/^      dep-check-version:/{f=1} f&&/^        default:/{gsub(/[^0-9.]/,"",$2);print $2;exit}' .github/workflows/dep-check.yml)"
+          if [ -z "$pinned" ]; then
+            echo "::error::could not read dep-check-version default from .github/workflows/dep-check.yml"
+            exit 1
+          fi
+          if npm view "@theokit/dep-check@$pinned" version >/dev/null 2>&1; then
+            echo "move=true" >> "$GITHUB_OUTPUT"
+            echo "registry serves $pinned — v1 can follow main"
+          else
+            echo "move=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$pinned is not published yet; leaving v1 where it is — the release will move it"
+          fi
+
+      - name: Move v1
+        if: steps.check.outputs.move == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/v1" -f sha="$SHA" -F force=true >/dev/null
+          echo "requested v1 -> $SHA"
+
+      - name: v1 must actually point there
+        if: steps.check.outputs.move == 'true'
+        # For an ANNOTATED tag `.object.sha` is the sha of the tag OBJECT, not the commit — the ref
+        # read f4f86f3 here while v1 resolved to 40514b8. Comparing that against github.sha fails
+        # every time. Follow the indirection.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          object_type="$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/v1" --jq '.object.type')"
+          object_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/v1" --jq '.object.sha')"
+          if [ "$object_type" = "tag" ]; then
+            actual="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}" --jq '.object.sha')"
+          else
+            actual="$object_sha"
+          fi
+          echo "v1 -> $actual (ref holds a $object_type object)"
+          if [ "$actual" != "$SHA" ]; then
+            echo "::error::v1 resolves to $actual, expected $SHA"
+            exit 1
+          fi
