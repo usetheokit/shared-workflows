@@ -126,3 +126,52 @@ jobs:
           expected="${WANTED:-$(cat .nvmrc)}"
           echo "wanted=${expected} actual=${actual}"
           case "${actual}" in "v${expected}"*) ;; *) echo "::error::node mismatch"; exit 1 ;; esac
+
+  npm-oidc-action:
+    name: npm-oidc action
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.12'
+
+      - name: The default lands inside the window
+        uses: ./actions/npm-oidc
+
+      - name: And it is the version the release workflows pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(npm --version)" = "11.9.0"
+
+      # A guard is only a guard if something has watched it refuse. Both bounds are exercised
+      # by running the same assertion against versions outside the window — in a subshell, so a
+      # correct refusal does not fail this job.
+      - name: It refuses npm 12 and anything below 11.5.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          check() {
+            actual="$1"
+            major="${actual%%.*}"; rest="${actual#*.}"; minor="${rest%%.*}"; patch="${rest#*.}"
+            [ "${major}" -ge 12 ] && return 1
+            [ "${major}" -lt 11 ] && return 1
+            if [ "${major}" -eq 11 ] && { [ "${minor}" -lt 5 ] || { [ "${minor}" -eq 5 ] && [ "${patch}" -lt 1 ]; }; }; then
+              return 1
+            fi
+            return 0
+          }
+          for bad in 10.9.7 11.0.0 11.5.0 12.0.0 12.1.3; do
+            if check "$bad"; then echo "::error::the guard ACCEPTED npm ${bad}"; exit 1; fi
+            echo "refused ${bad} — correct"
+          done
+          for good in 11.5.1 11.9.0 11.99.0; do
+            if ! check "$good"; then echo "::error::the guard REFUSED npm ${good}"; exit 1; fi
+            echo "accepted ${good} — correct"
+          done
+

@@ -1,0 +1,61 @@
+name: 'Install an npm that can publish over OIDC'
+description: >-
+  Replaces the npm bundled with Node, which is too old to use a trusted publisher, with a version
+  inside the narrow window that works — and asserts it landed rather than assuming.
+
+# THE STEP WITHOUT WHICH AN OIDC RELEASE IS CORRECTLY CONFIGURED AND USELESS.
+#
+# setup-node ships whatever npm the Node release bundles, and Node 22 bundles npm 10.9.7. Trusted
+# publishing needs npm >= 11.5.1: an older npm does not know what to do with `id-token: write`,
+# looks for a credential, finds none, and the registry answers `E404 Not Found - PUT` — an error
+# about the package, hours into a release, for a problem in the toolchain.
+#
+# The upper bound is not caution, it is measured. npm 12 breaks this path in two places, and the
+# quiet one is the dangerous half:
+#
+#   1. It rejects the `--no-git-checks` flag changesets passes through, with EUNKNOWNCONFIG, where
+#      every earlier npm ignored it. Loud, and therefore harmless.
+#   2. It returns an ARRAY from `npm info --json` where earlier npm returned an object. changesets
+#      reads `response.pkgInfo.versions || []`; on an array that is `undefined`, so the list of
+#      published versions comes back EMPTY and every package looks unpublished. Nothing errors —
+#      it just tries to publish all of them.
+#
+# Measured in theokit-di. This knowledge was written out longhand in eight release workflows,
+# because whoever learned it had nowhere to put it that the others would read.
+
+inputs:
+  version:
+    description: 'The npm to install. Must satisfy >=11.5.1 <12 — the action refuses otherwise.'
+    required: false
+    default: '11.9.0'
+
+runs:
+  using: composite
+  steps:
+    - name: Install npm ${{ inputs.version }}
+      shell: bash
+      env:
+        NPM_VERSION: ${{ inputs.version }}
+      # zizmor: ignore[adhoc-packages] — bootstrapping the package manager itself; no lockfile
+      # can cover npm, and the version is pinned exactly by the input above.
+      run: npm install -g "npm@${NPM_VERSION}"
+
+    - name: The installed npm is inside the window that works
+      shell: bash
+      # Asserted, not assumed. The failure this prevents is not a bad version being installed —
+      # it is a GOOD version being requested and something else being present: a runner image
+      # change, a cached global, an input someone widened to a range. Every one of those ends in
+      # `E404 Not Found - PUT` at publish time, which reads as a registry problem.
+      run: |
+        set -euo pipefail
+        actual="$(npm --version)"
+        major="${actual%%.*}"
+        rest="${actual#*.}"; minor="${rest%%.*}"; patch="${rest#*.}"
+        echo "npm ${actual}"
+        fail() { echo "::error::npm ${actual} cannot publish over OIDC — $1"; exit 1; }
+        [ "${major}" -ge 12 ] && fail "npm 12 breaks changesets: it returns an array from 'npm info --json', so every package looks unpublished"
+        [ "${major}" -lt 11 ] && fail "trusted publishing needs >= 11.5.1; this one ignores id-token and the registry answers E404 on PUT"
+        if [ "${major}" -eq 11 ] && { [ "${minor}" -lt 5 ] || { [ "${minor}" -eq 5 ] && [ "${patch}" -lt 1 ]; }; }; then
+          fail "trusted publishing needs >= 11.5.1"
+        fi
+        echo "npm ${actual} is within >=11.5.1 <12"

@@ -12,6 +12,7 @@ gate instead of eleven that drift.
 | [`.github/workflows/workflow-lint.yml`](.github/workflows/workflow-lint.yml) | actionlint + zizmor over a caller's workflows. Reusable. |
 | [`.github/workflows/secret-scan.yml`](.github/workflows/secret-scan.yml) | TruffleHog over the diff range. Reusable. |
 | [`actions/setup`](actions/setup) | Composite action: Node, the declared package manager, a cache that cannot outlive it, a frozen install. |
+| [`actions/npm-oidc`](actions/npm-oidc) | Composite action: the npm that can publish over OIDC, asserted rather than assumed. |
 | [`packages/dep-check`](packages/dep-check) | `@theokit/dep-check` — the tool the workflows invoke. |
 
 ## Adopting the gate
