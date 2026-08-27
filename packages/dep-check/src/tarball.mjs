@@ -20,6 +20,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { duplicateSiblingCopies } from "./checks.mjs";
 
+function pnpm(args, cwd) {
+  try {
+    return { ok: true, out: execFileSync("pnpm", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
+  } catch (err) {
+    return { ok: false, out: `${err.stdout ?? ""}${err.stderr ?? ""}` };
+  }
+}
+
 function npm(args, cwd) {
   try {
     return { ok: true, out: execFileSync("npm", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
@@ -32,15 +40,25 @@ function npm(args, cwd) {
  * Pack `packageDir`, install the tarball into an empty project alongside `alsoInstall`,
  * and report what the tree looks like.
  *
- * npm rather than pnpm on purpose. pnpm has defaulted `strict-peer-dependencies` to
- * false since v8, so a broken peer contract is a warning there and the gate would
- * pass on a package no npm user can install. The stricter resolver is the one that
- * tells the truth about the published contract.
+ * PACK with pnpm, INSTALL with npm. The two halves have different reasons and neither
+ * is interchangeable.
+ *
+ * npm for the install, because pnpm has defaulted `strict-peer-dependencies` to false
+ * since v8: a broken peer contract is a warning there, and the gate would pass on a
+ * package no npm user can install. The stricter resolver is the one that tells the
+ * truth about the published contract.
+ *
+ * pnpm for the pack, because `workspace:` is pnpm's protocol and only pnpm rewrites it
+ * into a real range while packing. Packed with npm, `workspace:*` survives verbatim into
+ * the tarball's manifest and the install can only ever fail — EUNSUPPORTEDPROTOCOL, for
+ * every package that depends on a sibling. Measured 2026-08-27 against usetheokit/theokit,
+ * where this gate is required and blocked a release whose packages were fine. The artifact
+ * has to be the one a real publish would produce, and here that means pnpm's.
  */
 export function installFromTarball({ packageDir, alsoInstall = [], keep = false }) {
   const scratch = mkdtempSync(join(tmpdir(), "dep-check-install-"));
   try {
-    const packed = npm(["pack", "--pack-destination", scratch, "--silent"], packageDir);
+    const packed = pnpm(["pack", "--pack-destination", scratch], packageDir);
     if (!packed.ok) return { installed: false, reason: "pack failed", detail: packed.out, duplicates: [] };
     const tarball = readdirSync(scratch).find((f) => f.endsWith(".tgz"));
     if (!tarball) return { installed: false, reason: "pack produced no tarball", detail: packed.out, duplicates: [] };
