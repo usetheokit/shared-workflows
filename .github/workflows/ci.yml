@@ -113,6 +113,10 @@ jobs:
           test "${declared}" = "${actual}"
 
       - name: Node matches what was asked for
+        # In the fixture directory, like the assertion above it: the `.nvmrc` the action reads
+        # is the fixture's, and reading a different one would make this pass by accident on any
+        # repository whose root happens to pin the same version.
+        working-directory: fixtures/pnpm-repo
         shell: bash
         env:
           WANTED: ${{ matrix.node }}
