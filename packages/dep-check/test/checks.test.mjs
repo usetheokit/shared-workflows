@@ -7,6 +7,7 @@ import {
   isSibling,
   rangeFloor,
   groupUntestedFloors,
+  pinnableSiblings,
   sharedFloor,
   unpublishedSiblings,
   untestedFloors,
@@ -105,6 +106,47 @@ describe("rangeFloor — check B: which published version is the bottom of the r
 
   it("test_skips_prereleases_so_the_floor_leg_does_not_run_on_a_next_tag", () => {
     expect(rangeFloor(">=5.0.0", published)).toBeNull();
+  });
+});
+
+describe("pinnableSiblings — a workspace member is not something to pin from the registry", () => {
+  // Measured on usetheokit/theokit#526. `@theokit/http` lives in that workspace at packages/http,
+  // and `pin-floors` replaced the local link with `0.4.0` from the registry — the floor of the
+  // `>=0.1.0-alpha.0` that `@theokit/agents` declares. `packages/theo` then failed to build:
+  //
+  //   error TS2724: '"@theokit/http"' has no exported member named 'createDecoratorHandler'
+  //
+  // Nobody anywhere has that combination. In development the workspace link is used; published,
+  // `workspace:^` is rewritten to the CURRENT local version, never an old one. The declared range
+  // is a promise to outside consumers, and the check that tests it is D — install the tarball as
+  // a consumer would — not an override that overwrites a sibling with its own past.
+  const published = { "@theokit/http": ["0.4.0", "1.0.0"], "@theokit/ui": ["1.1.0", "1.3.2"] };
+
+  it("test_does_not_pin_a_sibling_that_lives_in_this_workspace", () => {
+    const members = ["@theokit/http"];
+    expect(pinnableSiblings([{ dep: "@theokit/http", range: ">=0.1.0-alpha.0" }], members)).toEqual([]);
+  });
+
+  it("test_still_pins_a_sibling_that_only_comes_from_the_registry", () => {
+    // `@theokit/ui` is declared by this repository and built elsewhere. Its floor is exactly what
+    // the leg exists to exercise.
+    const out = pinnableSiblings([{ dep: "@theokit/ui", range: ">=1.1.0" }], ["@theokit/http"]);
+    expect(out.map((r) => r.dep)).toEqual(["@theokit/ui"]);
+  });
+
+  it("test_keeps_the_external_ones_when_both_kinds_are_declared", () => {
+    const out = pinnableSiblings(
+      [{ dep: "@theokit/http", range: ">=0.1.0" }, { dep: "@theokit/ui", range: ">=1.1.0" }],
+      ["@theokit/http"],
+    );
+    expect(out.map((r) => r.dep)).toEqual(["@theokit/ui"]);
+  });
+
+  it("test_an_empty_workspace_list_pins_everything_rather_than_nothing", () => {
+    // A repository with no publishable members must not silently stop pinning. Failing open here
+    // would turn the floor leg into a no-op with no signal that it had.
+    const out = pinnableSiblings([{ dep: "@theokit/ui", range: ">=1.1.0" }], []);
+    expect(out.map((r) => r.dep)).toEqual(["@theokit/ui"]);
   });
 });
 

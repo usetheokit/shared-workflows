@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [dep-check 0.8.0] - 2026-08-27
+
+### Fixed
+
+- A sibling that lives in the workspace under test is no longer written into the **global** floor
+  override. The override is one value for the whole tree, so forcing a published version over a
+  workspace link failed the packages that consume it through `workspace:` and never see an old one.
+  Measured on `usetheokit/theokit`: `@theokit/http` was pinned at `0.4.0` — the floor of the
+  `>=0.1.0-alpha.0` that `@theokit/agents` declares — and `packages/theo`, which declares
+  `workspace:^` and claims nothing about `0.4.0`, failed to build against a version it has never
+  been paired with. That is the defect #4 was, in a new place (#22)
+
+### Changed
+
+- Those floors are not dropped, they move to the per-package runs, where the floor is installed and
+  only the packages that actually declare it are built. Dropping them would have cost a real
+  finding: theokit-di#44 was found exactly this way. Coverage is strictly larger than before —
+  `theokit-di` now exercises `@theokit/di@0.1.1` for `di-agent` and `@theokit/di@0.2.0` for `orm`
+  as separate claims, where the global override could only ever test one of them (#22)
+
+
 ### Fixed
 
 - `v1` follows `main`, not only releases. The release moves it after a publish, which covers a

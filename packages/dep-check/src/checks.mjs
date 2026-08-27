@@ -94,6 +94,30 @@ export function rangeFloor(range, publishedVersions) {
 }
 
 /**
+ * The sibling references a floor override may legitimately pin.
+ *
+ * A sibling that lives in THIS workspace is not one of them. Pinning it replaces the workspace
+ * link with a published version, and that combination exists nowhere: in development the link is
+ * used, and once published `workspace:^` is rewritten to the CURRENT local version, never an old
+ * one. Measured on usetheokit/theokit#526 — `@theokit/http` lives at `packages/http` there, the
+ * override installed `0.4.0` over it, and `packages/theo` failed to build against a version it
+ * has never been paired with:
+ *
+ *     error TS2724: '"@theokit/http"' has no exported member named 'createDecoratorHandler'
+ *
+ * The declared range is still a claim worth checking — it is a promise to consumers outside this
+ * repository. The check that tests it is D, which installs the packed tarball the way a consumer
+ * would, against what the registry actually serves. Not an override that overwrites a sibling
+ * with its own past.
+ *
+ * An empty member list pins everything: failing open here would make the leg a silent no-op.
+ */
+export function pinnableSiblings(references, workspaceMembers) {
+  const members = new Set(workspaceMembers ?? []);
+  return references.filter((r) => !members.has(r.dep));
+}
+
+/**
  * The extra runs needed to exercise the floors the intersection cannot reach.
  *
  * `untestedFloors` names them; this turns that list into work. One entry per distinct
