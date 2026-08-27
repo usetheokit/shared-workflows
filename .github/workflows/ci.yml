@@ -70,3 +70,55 @@ jobs:
           npm install --silent "./$tarball"
           npx --no-install dep-check --help | grep -q "manifest"
           npx --no-install dep-check --help | grep -q "run-command"
+
+  setup-action:
+    name: setup action (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both paths through the action: an explicit version, and the empty default that
+        # falls back to .nvmrc. The second is the one every caller uses, so it is the one
+        # most likely to break unnoticed.
+        include:
+          - node: '22'
+            explicit: true
+          - node: ''
+            explicit: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run the action against the fixture
+        id: setup
+        uses: ./actions/setup
+        with:
+          node-version: ${{ matrix.node }}
+          working-directory: fixtures/pnpm-repo
+      - name: The action resolved the DECLARED package manager, not the runner's
+        working-directory: fixtures/pnpm-repo
+        shell: bash
+        # This is the assertion the whole action exists for. theokit-sdk pinned pnpm 9.15.0
+        # in four workflows while its manifest declared 10.34.1, and nothing failed — the
+        # install simply resolved differently and every gate stayed green about a tree no
+        # contributor had (usetheokit/theokit-sdk#415). An action that reads the manifest is
+        # only worth having if something checks that it did.
+        run: |
+          set -euo pipefail
+          declared="$(node -p "require('./package.json').packageManager.split('+')[0].split('@')[1]")"
+          actual="$(pnpm --version)"
+          echo "declared=${declared} actual=${actual}"
+          test "${declared}" = "${actual}"
+
+      - name: Node matches what was asked for
+        shell: bash
+        env:
+          WANTED: ${{ matrix.node }}
+        run: |
+          set -euo pipefail
+          actual="$(node --version)"
+          expected="${WANTED:-$(cat .nvmrc)}"
+          echo "wanted=${expected} actual=${actual}"
+          case "${actual}" in "v${expected}"*) ;; *) echo "::error::node mismatch"; exit 1 ;; esac

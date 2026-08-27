@@ -1,0 +1,92 @@
+name: 'Setup the toolchain'
+description: >-
+  Checkout is the caller's; this is everything after it — Node, the package manager the repository
+  declares, a cache keyed so it cannot outlive the manager that wrote it, and a frozen install.
+
+# A COMPOSITE ACTION, not a reusable workflow, and the distinction is not cosmetic. A reusable
+# workflow is a whole JOB: it runs on its own runner with its own filesystem, so a job that needed
+# "setup, then my tests" would have to hand the tests to the reusable as a string input — the shape
+# a shared workflow takes when it is asked to be everything. Setup is a sequence of STEPS inside
+# somebody else's job, and a composite action is the only thing that is.
+#
+#   - uses: usetheokit/shared-workflows/actions/setup@v1
+#     with:
+#       node-version: '22.12'   # optional; defaults to .nvmrc
+
+inputs:
+  node-version:
+    description: >-
+      Explicit Node version. Leave empty to read `.nvmrc`, which is the default because it keeps the
+      version in one place that contributors and CI both read. Pass it only for a matrix leg.
+    required: false
+    default: ''
+  install:
+    description: 'Run the frozen install. Set false for a job that only needs the toolchain.'
+    required: false
+    default: 'true'
+  install-args:
+    description: 'Extra arguments for the install, e.g. --ignore-scripts.'
+    required: false
+    default: ''
+  working-directory:
+    description: >-
+      Where the project root is. A composite action does not inherit the caller's
+      `defaults.run.working-directory`, so a repository whose manifest is not at the checkout root
+      has to say so here — otherwise the install runs against nothing and reports success.
+    required: false
+    default: '.'
+
+outputs:
+  package-manager-version:
+    description: 'The resolved package manager version, so a caller can assert on it.'
+    value: ${{ steps.pm.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install the package manager the repository declares
+      # NO `version:` input, deliberately. pnpm/action-setup reads `packageManager` from
+      # package.json when none is given, so the version lives in exactly one place. Passing it here
+      # creates a second place to update and therefore a place to forget: theokit-sdk pinned
+      # `corepack prepare pnpm@9.15.0` in four workflows while its manifest said 10.34.1, so every
+      # gate there validated under a package manager no contributor used (usetheokit/theokit-sdk#415).
+      uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+    - name: Setup Node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        node-version-file: ${{ inputs.node-version == '' && format('{0}/.nvmrc', inputs.working-directory) || '' }}
+        cache: pnpm
+        # The cache key must change when the package manager does. setup-node keys the pnpm store on
+        # the lockfile alone, so a pnpm 9 -> 10 bump leaves the key identical and the job restores a
+        # store the new pnpm reads as inconsistent — `ERR_PNPM_MISSING_PACKAGE_INDEX_FILE`, on a
+        # package the lockfile does list. package.json carries `packageManager`, so including it
+        # ties the cache to the pnpm that wrote it.
+        cache-dependency-path: |
+          ${{ inputs.working-directory }}/pnpm-lock.yaml
+          ${{ inputs.working-directory }}/package.json
+
+    - name: Record the resolved package manager
+      id: pm
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      # Printed and exported rather than assumed. When CI and a contributor disagree about the
+      # package manager, nothing errors — the install simply resolves differently, and the run stays
+      # green about a tree nobody has. One line in the log is what makes that visible.
+      run: |
+        set -euo pipefail
+        version="$(pnpm --version)"
+        declared="$(node -p "require('./package.json').packageManager ?? 'not declared'")"
+        echo "pnpm ${version} · package.json declares ${declared}"
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+    - name: Install (frozen lockfile)
+      if: ${{ inputs.install == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        EXTRA_ARGS: ${{ inputs.install-args }}
+      # Frozen: CI installs what the lockfile says or fails. A non-frozen install in CI resolves
+      # something the committed lockfile does not describe, and then the suite passes about that.
+      run: pnpm install --frozen-lockfile ${EXTRA_ARGS}

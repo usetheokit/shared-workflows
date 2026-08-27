@@ -11,6 +11,7 @@ gate instead of eleven that drift.
 | [`.github/workflows/dep-check-report.yml`](.github/workflows/dep-check-report.yml) | The organisation-wide sweep. Scheduled, runs here, opens one standing issue. |
 | [`.github/workflows/workflow-lint.yml`](.github/workflows/workflow-lint.yml) | actionlint + zizmor over a caller's workflows. Reusable. |
 | [`.github/workflows/secret-scan.yml`](.github/workflows/secret-scan.yml) | TruffleHog over the diff range. Reusable. |
+| [`actions/setup`](actions/setup) | Composite action: Node, the declared package manager, a cache that cannot outlive it, a frozen install. |
 | [`packages/dep-check`](packages/dep-check) | `@theokit/dep-check` — the tool the workflows invoke. |
 
 ## Adopting the gate
@@ -41,6 +42,17 @@ jobs:
 
 Then mark **`dep-check / dependency gate`** required in branch protection. A job that runs and
 reports but is not required blocks nothing.
+
+## Why setup is an action and the gates are workflows
+
+A reusable workflow is a whole **job**: its own runner, its own filesystem. That fits a gate, which
+is a job — lint the workflows, scan the diff, check the ranges. It does not fit setup, which is a
+sequence of **steps inside somebody else's job**. Sharing setup as a reusable workflow would mean
+handing it the rest of the job as a string input, which is the shape a shared workflow takes when it
+is asked to be everything.
+
+So `actions/setup` is a composite action and the gates are reusable workflows. The rule is which
+unit the thing actually is, not which mechanism is more familiar.
 
 ## Triggers stay in the caller
 
