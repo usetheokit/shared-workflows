@@ -94,6 +94,50 @@ export function rangeFloor(range, publishedVersions) {
 }
 
 /**
+ * The siblings check D must take from the workspace, because the registry does not have them yet.
+ *
+ * A version pull request bumps a package and a sibling it depends on in the same cut. `pnpm pack`
+ * rewrites `workspace:^` to the NEW local version — correctly — and then the install asks npm for
+ * a version whose whole purpose is to be published by that same pull request. `ETARGET`.
+ *
+ * Measured on usetheokit/theokit#524: `theokit@0.57.0` asking for `@theokit/agents@^12.1.0` while
+ * the registry had `12.0.0`. Nothing about a manifest fixes it, and every monorepo that publishes
+ * two interdependent packages together meets it on its first version pull request. The earlier one
+ * there predates this gate, which is why nobody had met it before.
+ *
+ * Deliberately narrow. A sibling the registry already has is NOT substituted: installing a local
+ * tarball for a published version would quietly stop testing what a consumer actually resolves.
+ * A dependency that is not a workspace package at all is not substituted either — a genuinely
+ * missing dependency is the case this check exists to catch, and it is indistinguishable from the
+ * outside if this swallows it. Only the gap is filled, and the caller reports what it filled.
+ */
+export function unpublishedSiblings({ references, workspace, published }) {
+  const byName = new Map(workspace.map((p) => [p.name, p]));
+  const out = [];
+  const seen = new Set();
+  // Transitively, because a substituted tarball brings its own unpublished asks with it.
+  // `@theokit/tauri` depends on `theokit@0.57.0`, which is substituted — and that tarball then
+  // requests `@theokit/agents@^12.1.0`, still absent from the registry. Substituting only the
+  // direct reference moves the ETARGET one level down instead of resolving it.
+  const queue = references.map((r) => r.dep);
+  while (queue.length) {
+    const dep = queue.shift();
+    if (seen.has(dep)) continue;
+    seen.add(dep);
+    const local = byName.get(dep);
+    if (!local) continue;
+    const versions = published[dep];
+    // Missing is not empty: an unreachable registry must not read as "nothing is published",
+    // or every sibling gets a local tarball and the check tests nothing real.
+    if (!Array.isArray(versions) || !versions.length) continue;
+    if (versions.includes(local.version)) continue;
+    out.push({ name: dep, version: local.version, dir: local.dir });
+    for (const r of local.references ?? []) queue.push(r.dep);
+  }
+  return out;
+}
+
+/**
  * The floor for a sibling that SEVERAL packages in one workspace declare.
  *
  * The override the floor leg writes is a single global value, so it has to be a version
