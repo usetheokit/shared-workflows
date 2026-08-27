@@ -24,7 +24,7 @@ import { parseArgs } from "node:util";
 import { ceilingDrift, consumersLeftBehind, installedDrift, isSibling, rangeFloor, sharedFloor } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
 import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
-import { detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
+import { detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
 import { installFromTarball } from "./src/tarball.mjs";
 
 const { values: flags, positionals } = parseArgs({
@@ -54,6 +54,7 @@ const USAGE = `dep-check <command> [--root <dir>] [--json]
                               packageManager field — the two can disagree.
   install-command             print the install command for this repository's lockfile.
   run-command <script>        print the command that runs a package script here (default: test).
+  build-command               print this repository's build command, or nothing if it has none.
 `;
 
 /**
@@ -399,6 +400,34 @@ function commandRunCommand(root, script) {
   return 0;
 }
 
+/**
+ * The build command for this repository, or nothing if it has no build.
+ *
+ * The floor leg reinstalls at the bottom of every range and then runs the suite. It did
+ * NOT build in between, so it ran the tests against a tree with no `dist/` — something no
+ * real CI here produces. Both repositories whose CI builds before testing failed on that
+ * and not on a range: `theokit-tui`'s publish-contract test reported
+ * `publint --strict` errors, and `theokit` reported `SKIP: dist/index.js not found (run
+ * pnpm build first)` alongside TS2307s for subpaths that only exist once built.
+ *
+ * A leg that skips a step the real pipeline performs is not testing the floor. It is
+ * testing an arrangement that never ships.
+ *
+ * `build` is preferred over `build:packages` when a repository has both, because it is
+ * the one that produces everything a consumer sees. A caller needing the other passes
+ * `build-command` explicitly.
+ */
+function commandBuildCommand(root) {
+  const detected = detectPackageManager(root);
+  if (!detected) {
+    console.error(`no lockfile in ${root}: cannot tell which package manager this repository uses`);
+    return 1;
+  }
+  const script = detectBuildScript(root);
+  if (script) console.log([...detected.run, script].join(" "));
+  return 0;
+}
+
 const commands = {
   manifest: () => commandManifest(flags.root),
   floors: () => commandFloors(flags.root),
@@ -411,6 +440,7 @@ const commands = {
   "pin-floors": () => commandPinFloors(flags.root),
   "install-command": () => commandInstallCommand(flags.root, { unlocked: flags.unlocked }),
   "run-command": () => commandRunCommand(flags.root, rest[0]),
+  "build-command": () => commandBuildCommand(flags.root),
 };
 
 if (flags.help || !command || !commands[command]) {

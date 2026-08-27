@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { detectPackageManager } from "../src/package-manager.mjs";
+import { detectBuildScript, detectPackageManager } from "../src/package-manager.mjs";
 import { installFromTarball } from "../src/tarball.mjs";
 
 /**
@@ -72,5 +72,38 @@ describe("which packer a workspace member gets", () => {
 
     const surfaced = `${result.reason ?? ""}\n${result.detail ?? ""}`;
     expect(surfaced).not.toMatch(/EUNSUPPORTEDPROTOCOL|Unsupported URL Type "workspace:"/);
+  });
+});
+
+/**
+ * The floor leg reinstalls at the bottom of every declared range and then runs the suite.
+ * It did not build in between, so it ran against a tree with no `dist/` — an arrangement
+ * no CI here produces. `theokit-tui` failed its publish-contract test on `publint
+ * --strict`, and `theokit` reported `SKIP: dist/index.js not found (run pnpm build
+ * first)`. Neither failure was about a range.
+ */
+describe("whether the repository builds before its tests", () => {
+  function repoWith(scripts) {
+    const root = mkdtempSync(join(tmpdir(), "dep-check-build-"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "r", scripts }));
+    return root;
+  }
+
+  it("test_finds_the_build_script_a_repository_runs_before_testing", () => {
+    expect(detectBuildScript(repoWith({ build: "tsc", test: "vitest run" }))).toBe("build");
+  });
+
+  it("test_prefers_build_over_build_packages_when_a_repository_has_both", () => {
+    // `theokit` has both. `build` is the one that produces everything a consumer sees.
+    expect(detectBuildScript(repoWith({ build: "turbo build", "build:packages": "turbo build --filter=./packages/*" }))).toBe("build");
+  });
+
+  it("test_falls_back_to_build_packages_when_that_is_the_only_one", () => {
+    expect(detectBuildScript(repoWith({ "build:packages": "turbo build" }))).toBe("build:packages");
+  });
+
+  it("test_returns_null_for_a_repository_with_no_build_so_the_step_is_skipped_not_failed", () => {
+    // A repository that does not build must not have the leg fail on a missing script.
+    expect(detectBuildScript(repoWith({ test: "vitest run" }))).toBeNull();
   });
 });

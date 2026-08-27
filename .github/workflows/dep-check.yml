@@ -32,7 +32,7 @@ on:
           TOOL is a semver artifact, so a behaviour change is a version bump somebody reviewed.
           The pin lives here rather than in eleven callers.
         type: string
-        default: '0.3.0'
+        default: '0.4.0'
       run-floor-check:
         description: |
           Also run the suite against the BOTTOM of every declared sibling range, not only
@@ -222,6 +222,24 @@ jobs:
         run: |
           set -euo pipefail
           cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" install-command --root repo --unlocked)
+          echo "detected: $cmd"
+          cd repo && $cmd
+
+      - name: Build, if this repository has one
+        # The leg reinstalls at the floor and then runs the suite. Without this step it ran
+        # against a tree with no `dist/`, which no CI here produces: `theokit-tui` failed its
+        # publish-contract test on `publint --strict`, and `theokit` reported `SKIP:
+        # dist/index.js not found (run pnpm build first)` with TS2307s for subpaths that only
+        # exist once built. Neither failure was about a range, and both read as one.
+        #
+        # A repository with no build script prints nothing here and the step is a no-op.
+        run: |
+          set -euo pipefail
+          cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" build-command --root repo)
+          if [ -z "$cmd" ]; then
+            echo "no build script in this repository — nothing to build"
+            exit 0
+          fi
           echo "detected: $cmd"
           cd repo && $cmd
 
