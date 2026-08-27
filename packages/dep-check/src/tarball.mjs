@@ -56,7 +56,7 @@ const npm = (args, cwd) => run("npm", args, cwd);
  * pass on a package no npm user can install. The stricter resolver is the one that
  * tells the truth about the published contract.
  */
-export function installFromTarball({ packageDir, repoRoot, alsoInstall = [], keep = false }) {
+export function installFromTarball({ packageDir, repoRoot, alsoInstall = [], localSiblings = [], keep = false }) {
   const scratch = mkdtempSync(join(tmpdir(), "dep-check-install-"));
   try {
     // Detected from the REPOSITORY ROOT, not from the package directory. In a workspace the lockfile
@@ -69,8 +69,31 @@ export function installFromTarball({ packageDir, repoRoot, alsoInstall = [], kee
     const tarball = readdirSync(scratch).find((f) => f.endsWith(".tgz"));
     if (!tarball) return { installed: false, reason: "pack produced no tarball", detail: packed.out, duplicates: [] };
 
+    // Siblings the registry does not have yet, packed from the workspace and installed as files.
+    // Without this, a version pull request that bumps a package and a sibling together can never
+    // pass: `pnpm pack` rewrites `workspace:^` to the new local version, and the install asks npm
+    // for the version that pull request exists to publish. See `unpublishedSiblings` for why this
+    // is narrow — only the gap is filled, never a version the registry already serves.
+    const substituted = [];
+    for (const sibling of localSiblings) {
+      const packedSibling = run(manager, ["pack", "--pack-destination", scratch], sibling.dir);
+      if (!packedSibling.ok) {
+        return { installed: false, reason: `pack failed for ${sibling.name} (${manager})`, detail: packedSibling.out, duplicates: [], substituted };
+      }
+      const file = readdirSync(scratch).find((f) => f.endsWith(".tgz") && f !== tarball && !substituted.some((s) => s.file === f));
+      if (!file) {
+        return { installed: false, reason: `pack produced no tarball for ${sibling.name}`, detail: packedSibling.out, duplicates: [], substituted };
+      }
+      substituted.push({ ...sibling, file });
+    }
+
     npm(["init", "-y"], scratch);
-    const install = npm(["install", "--no-audit", "--no-fund", join(scratch, tarball), ...alsoInstall], scratch);
+    const install = npm([
+      "install", "--no-audit", "--no-fund",
+      join(scratch, tarball),
+      ...substituted.map((s) => join(scratch, s.file)),
+      ...alsoInstall,
+    ], scratch);
     if (!install.ok) {
       const eresolve = /ERESOLVE/.test(install.out);
       return {
@@ -78,6 +101,7 @@ export function installFromTarball({ packageDir, repoRoot, alsoInstall = [], kee
         reason: eresolve ? "ERESOLVE — the declared peers cannot be satisfied together" : "install failed",
         detail: install.out.split("\n").filter((l) => /npm error/.test(l)).slice(0, 12).join("\n"),
         duplicates: [],
+        substituted,
       };
     }
 
@@ -88,9 +112,9 @@ export function installFromTarball({ packageDir, repoRoot, alsoInstall = [], kee
     try {
       tree = JSON.parse(listed.out);
     } catch {
-      return { installed: true, reason: "npm ls produced no readable tree", detail: listed.out.slice(0, 800), duplicates: [] };
+      return { installed: true, reason: "npm ls produced no readable tree", detail: listed.out.slice(0, 800), duplicates: [], substituted };
     }
-    return { installed: true, reason: null, detail: null, duplicates: duplicateSiblingCopies(tree) };
+    return { installed: true, reason: null, detail: null, duplicates: duplicateSiblingCopies(tree), substituted };
   } finally {
     if (!keep) rmSync(scratch, { recursive: true, force: true });
   }

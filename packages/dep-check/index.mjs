@@ -21,7 +21,7 @@
  * none of the other three mean anything either.
  */
 import { parseArgs } from "node:util";
-import { ceilingDrift, consumersLeftBehind, installedDrift, isSibling, rangeFloor, sharedFloor, untestedFloors } from "./src/checks.mjs";
+import { ceilingDrift, consumersLeftBehind, installedDrift, isSibling, rangeFloor, sharedFloor, unpublishedSiblings, untestedFloors } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
 import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
 import { detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
@@ -200,11 +200,28 @@ async function commandConsumers([pkg, nextVersion]) {
 
 async function commandInstall(root) {
   const findings = [];
+  const workspace = findPublishablePackages(root).map((p) => ({
+    name: p.manifest.name,
+    version: p.manifest.version,
+    dir: p.dir,
+    // Carried so the substitution can follow a substituted tarball's own unpublished asks.
+    references: siblingReferences(p.manifest, isSibling),
+  }));
+  const substitutions = [];
+  // Built once for every workspace package, not per reference: the substitution walks
+  // transitively, so it needs an answer for siblings the package under test never names.
+  const published = {};
+  for (const p of workspace) published[p.name] = await publishedVersions(p.name);
   for (const pkg of findPublishablePackages(root)) {
-    const siblings = siblingReferences(pkg.manifest, isSibling)
+    const refs = siblingReferences(pkg.manifest, isSibling);
+    const siblings = refs
       .filter((r) => r.field === "peerDependencies" && !/^(workspace|link|file|portal):/.test(r.range))
       .map((r) => `${r.dep}@latest`);
-    const result = installFromTarball({ packageDir: pkg.dir, repoRoot: root, alsoInstall: siblings });
+    // What the registry cannot answer yet, taken from the workspace instead. Only the gap —
+    // see `unpublishedSiblings`.
+    const localSiblings = unpublishedSiblings({ references: refs, workspace, published });
+    const result = installFromTarball({ packageDir: pkg.dir, repoRoot: root, alsoInstall: siblings, localSiblings });
+    for (const s of result.substituted ?? []) substitutions.push({ pkg: pkg.manifest.name, ...s });
     if (!result.installed) {
       findings.push({ pkg: pkg.manifest.name, problem: result.reason, detail: result.detail });
     } else if (result.duplicates.length) {
@@ -220,6 +237,13 @@ async function commandInstall(root) {
     note: "  Packed with the workspace's own manager and installed with npm — two tools, two reasons.\n  Only pnpm rewrites `workspace:` at pack time, so npm-packed workspace members produce tarballs\n  that install nowhere. And pnpm has defaulted strict-peer-dependencies to false since v8, so\n  installing with it would pass on a broken peer contract no npm user can install.",
     columns: (f) => `${f.pkg.padEnd(28)} ${f.problem}${f.detail ? `\n      ${f.detail.replace(/\n/g, "\n      ")}` : ""}`,
   });
+  // Named, not hidden. A tarball taken from the workspace is a weaker check than one resolved
+  // from the registry — it tests the artifact this cut will publish rather than the one a
+  // consumer can install today — and a reader deciding what a green D means has to know which
+  // one they got. Same reason `untestedFloors` prints (#6).
+  for (const s of substitutions) {
+    console.log(`  note: ${s.pkg} was installed against ${s.name}@${s.version} packed from this workspace — the registry does not have that version yet, so this cut is testing what it is about to publish`);
+  }
   return findings.length === 0 ? 0 : 1;
 }
 

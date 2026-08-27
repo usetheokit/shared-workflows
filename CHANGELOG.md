@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [dep-check 0.6.0] - 2026-08-27
+
+### Fixed
+
+- Check D can pass on a version pull request that bumps a package and a sibling it depends on in
+  the same cut. It could not before, and no manifest change could make it: `pnpm pack` rewrites
+  `workspace:^` to the new local version — correctly — and the install then asked npm for the
+  version that pull request exists to publish, answering `ETARGET`. Measured on
+  `usetheokit/theokit#524`, where `theokit@0.57.0` asked for `@theokit/agents@^12.1.0` while the
+  registry had `12.0.0`. Every monorepo publishing two interdependent packages together meets this
+  on its first version pull request (#17)
+
+  Siblings the registry does not have yet are now packed from the workspace and installed from
+  those tarballs, transitively — a substituted tarball brings its own unpublished asks with it, and
+  filling only the direct reference moved the `ETARGET` one level down. The substitution is
+  deliberately narrow: a sibling the registry already serves is still installed from the registry,
+  and a dependency that is not a workspace package at all still fails the install, which is the
+  case this check exists to catch.
+
+  Every substitution is printed. A tarball taken from the workspace is a weaker check than one
+  resolved from the registry, and a reader deciding what a green D means has to know which one they
+  got (#6, #17)
+
+
 ### Fixed
 
 - The gate runs the `@theokit/dep-check` version that was just released. `0.5.0` published to npm

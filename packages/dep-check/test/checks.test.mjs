@@ -7,6 +7,7 @@ import {
   isSibling,
   rangeFloor,
   sharedFloor,
+  unpublishedSiblings,
   untestedFloors,
 } from "../src/checks.mjs";
 
@@ -103,6 +104,57 @@ describe("rangeFloor — check B: which published version is the bottom of the r
 
   it("test_skips_prereleases_so_the_floor_leg_does_not_run_on_a_next_tag", () => {
     expect(rangeFloor(">=5.0.0", published)).toBeNull();
+  });
+});
+
+describe("unpublishedSiblings — what check D cannot get from the registry yet", () => {
+  // A version pull request bumps a package and a sibling it depends on in the same cut.
+  // `pnpm pack` rewrites `workspace:^` to the NEW local version, correctly, and the registry
+  // does not have it yet — the version this very pull request exists to publish. Measured on
+  // usetheokit/theokit#524: theokit@0.57.0 asking for @theokit/agents@^12.1.0 while npm had
+  // 12.0.0, answering ETARGET. Any monorepo publishing two interdependent packages together
+  // hits it, every time.
+  const workspace = [
+    { name: "@theokit/agents", version: "12.1.0", dir: "/w/packages/agents" },
+    { name: "@theokit/ui", version: "1.3.2", dir: "/w/packages/ui" },
+  ];
+  const published = { "@theokit/agents": ["11.1.0", "12.0.0"], "@theokit/ui": ["1.3.0", "1.3.2"] };
+
+  it("test_names_the_sibling_whose_local_version_the_registry_does_not_have", () => {
+    const out = unpublishedSiblings({ references: [{ dep: "@theokit/agents" }], workspace, published });
+    expect(out.map((s) => s.name)).toEqual(["@theokit/agents"]);
+    expect(out[0].version).toBe("12.1.0");
+  });
+
+  it("test_leaves_a_sibling_the_registry_already_has_to_be_installed_from_the_registry", () => {
+    // Substituting a local tarball for a version that IS published would quietly stop testing
+    // what a consumer actually resolves. Only the gap gets the local artifact.
+    expect(unpublishedSiblings({ references: [{ dep: "@theokit/ui" }], workspace, published })).toEqual([]);
+  });
+
+  it("test_ignores_a_dependency_that_is_not_a_workspace_package_at_all", () => {
+    // A genuinely missing dependency must still fail the install. That is the case check D
+    // exists to catch, and it is indistinguishable from outside if this swallows it.
+    expect(unpublishedSiblings({ references: [{ dep: "@theokit/nowhere" }], workspace, published })).toEqual([]);
+  });
+
+  it("test_follows_a_substituted_tarballs_own_unpublished_asks", () => {
+    // `@theokit/tauri` depends on `theokit@0.57.0`, which is substituted — and that tarball then
+    // requests `@theokit/agents@^12.1.0`, still absent. Substituting only the direct reference
+    // moves the ETARGET one level down. Measured: this is what @theokit/tauri failed on.
+    const deep = [
+      { name: "theokit", version: "0.57.0", dir: "/w/packages/theo", references: [{ dep: "@theokit/agents" }] },
+      { name: "@theokit/agents", version: "12.1.0", dir: "/w/packages/agents" },
+    ];
+    const pub = { theokit: ["0.56.0"], "@theokit/agents": ["12.0.0"] };
+    const out = unpublishedSiblings({ references: [{ dep: "theokit" }], workspace: deep, published: pub });
+    expect(out.map((s) => s.name).sort()).toEqual(["@theokit/agents", "theokit"]);
+  });
+
+  it("test_returns_nothing_when_the_registry_answer_is_missing_rather_than_empty", () => {
+    // No packument is not the same as no versions. Treating an unreachable registry as "nothing
+    // is published" would substitute local tarballs for every sibling and test nothing real.
+    expect(unpublishedSiblings({ references: [{ dep: "@theokit/agents" }], workspace, published: {} })).toEqual([]);
   });
 });
 
