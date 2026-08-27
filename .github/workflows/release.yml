@@ -145,3 +145,88 @@ jobs:
         run: |
           npm pack --dry-run
           echo "Every gate passed. Re-run with dry_run=false, or push a dep-check-v<version> tag, to publish."
+
+  # `v1` is the ref every consumer's `dep-check.yml` resolves. Moving it by hand was the last
+  # manual step in a release, and it has been missed on two of six: `0.2.0` left the tag serving
+  # `0.1.0` and blocked the gate on theokit#521, and `0.5.0` left it serving `0.4.0` so nobody
+  # received that release at all. The publish is green either time — npm has the tarball, with
+  # provenance — which is exactly why a person reading that green does not notice (#13, #15).
+  #
+  # A SEPARATE JOB, ON PURPOSE. `publish` holds `id-token: write` and no repository write at all;
+  # giving it `contents: write` so it could push a tag would widen the job that mints the npm
+  # credential. This one holds `contents: write` and no OIDC, and cannot publish anything.
+  advance-v1:
+    name: advance v1 to this release
+    needs: publish
+    # Only after a publish that actually succeeded. A `v1` pointing at a commit whose publish
+    # failed sends every consumer to a version that is not on the registry — worse than lagging,
+    # because `npx @theokit/dep-check@<missing>` fails at the point of use rather than quietly
+    # running an older one.
+    if: needs.publish.result == 'success' && startsWith(github.ref, 'refs/tags/dep-check-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: The registry must already serve this version
+        # Verified from OUTSIDE the thing being verified: the publish step's exit code says the
+        # command returned zero, and the registry says the tarball is fetchable. Only the second
+        # is what a consumer will experience, and this ref is about to send all of them there.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#dep-check-v}"
+          echo "checking the registry for @theokit/dep-check@$version"
+          for attempt in 1 2 3 4 5; do
+            if npm view "@theokit/dep-check@$version" version >/dev/null 2>&1; then
+              echo "registry serves $version"
+              exit 0
+            fi
+            echo "not visible yet (attempt $attempt) — registry propagation, waiting"
+            sleep 10
+          done
+          echo "::error::@theokit/dep-check@$version is not on the registry; refusing to move v1 to a version consumers cannot install"
+          exit 1
+
+      - name: Move v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/v1" \
+            -f sha="$SHA" -F force=true >/dev/null
+          echo "requested v1 -> $SHA"
+
+      - name: v1 must actually point there
+        # The failure mode this whole job exists to remove is silence: a tag that did not move
+        # looks exactly like a tag that did. An API call returning 200 is not the same claim as
+        # the ref holding the value, so the ref is read back and compared.
+        #
+        # AND THE REF DOES NOT ALWAYS HOLD A COMMIT. For an ANNOTATED tag, `.object.sha` is the
+        # sha of the tag OBJECT, and the commit is one level further in. Measured on this very
+        # repository while writing this job: the ref read `f4f86f3` while `v1` resolved to commit
+        # `40514b8`. Comparing the first against `github.sha` fails every time, and would have
+        # turned a working release into a red one — a verifier reading the wrong object, which is
+        # the exact family of defect this repository keeps producing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          object_type="$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/v1" --jq '.object.type')"
+          object_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/v1" --jq '.object.sha')"
+          if [ "$object_type" = "tag" ]; then
+            actual="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}" --jq '.object.sha')"
+          else
+            actual="$object_sha"
+          fi
+          echo "v1 -> $actual (ref holds a $object_type object)"
+          if [ "$actual" != "$SHA" ]; then
+            echo "::error::v1 resolves to $actual, expected $SHA"
+            exit 1
+          fi
+          echo "### v1 advanced" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`v1\` -> \`$SHA\` ($GITHUB_REF_NAME), verified by reading the ref back." >> "$GITHUB_STEP_SUMMARY"

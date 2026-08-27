@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The release advances `v1` itself, after verifying the registry actually serves the version and
+  then reading the ref back to confirm it moved. It was the last manual step in a release and had
+  been missed on two of six — `0.2.0` left the tag serving `0.1.0` and blocked the gate on
+  `theokit#521`; `0.5.0` left it serving `0.4.0`, so no consumer received that release. It runs as
+  a separate job holding `contents: write` and no OIDC, so the job that mints the npm credential
+  gains no repository write (#15)
+
+
 ## [dep-check 0.6.0] - 2026-08-27
 
 ### Fixed
