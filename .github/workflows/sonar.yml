@@ -1,0 +1,151 @@
+# Reusable SonarQube Cloud analysis for the Theokit ecosystem.
+#
+#   jobs:
+#     sonar:
+#       uses: usetheokit/shared-workflows/.github/workflows/sonar.yml@v1
+#       secrets: inherit
+#       with:
+#         coverage-command: pnpm test:coverage
+#
+# ## Why this is not eight copies of a step
+#
+# The step existed in exactly one repository, inline, and had been dead since the day it was
+# written: `if: matrix.node-version == '22.x'` against a matrix of `['22.12', '22']`, a value that
+# never occurs. It reported `skipped` on every run for two months, and a skipped step renders the
+# same as a passing one in the checks list. Copying that step into eight more repositories would
+# have copied the class of defect with it — which is the argument this repository exists to make.
+#
+# ## Why CI-based analysis rather than Automatic Analysis
+#
+# Automatic Analysis does not import coverage: "Code coverage information is not supported"
+# (SonarQube Cloud docs, Automatic Analysis). It is otherwise fine, and it is what runs today. A
+# caller that adopts this workflow is choosing to trade a zero-config scan for one that knows how
+# much of the code its tests actually reach.
+#
+# ADOPTING THIS REQUIRES TURNING AUTOMATIC ANALYSIS OFF FIRST, per project, under
+# Administration > Analysis Method. The scanner refuses to run alongside it rather than taking
+# over:
+#
+#     [ERROR] ScannerEngine: You are running CI analysis while Automatic Analysis is enabled.
+#             Please consider disabling one or the other.
+#
+# An earlier version of this comment claimed SonarCloud disables Automatic Analysis on its own as
+# soon as a CI analysis reports. It does not — measured on theokit-tui, where the step failed with
+# exactly the error above until the toggle was switched off by hand.
+name: SonarQube Cloud
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node used for the scan. One version, not a matrix — see `concurrency` below.'
+        type: string
+        default: '22.12'
+      pnpm-version:
+        description: 'pnpm pinned through corepack. Must match the caller packageManager field.'
+        type: string
+        default: '10.34.1'
+      coverage-command:
+        description: |
+          Command that writes the lcov files named in the caller's `sonar-project.properties`.
+          Leave empty to scan without coverage — the analysis still reports bugs, vulnerabilities
+          and smells, it just cannot say what the tests reach.
+        type: string
+        default: ''
+      install-command:
+        description: 'Override when the repository does not install with a frozen pnpm lockfile.'
+        type: string
+        default: ''
+
+# One analysis per ref. Two scans of the same commit race for the same server-side report, and the
+# loser overwrites the winner with an identical result — wasted minutes, and a confusing history.
+concurrency:
+  group: sonar-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sonar:
+    name: SonarQube Cloud
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Full history. The scanner assigns each issue to the commit that introduced it, and on a
+      # depth-1 clone every line looks like it arrived in the last commit — which makes the "new
+      # code" period, and therefore the quality gate, describe the wrong change.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Announce a missing token instead of failing on it
+        id: token
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "${SONAR_TOKEN}" ]; then
+            echo "::warning title=SonarQube Cloud::SONAR_TOKEN is not set — analysis skipped."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enable Corepack and pin pnpm
+        if: steps.token.outputs.present == 'true' && hashFiles('pnpm-lock.yaml') != ''
+        env:
+          PNPM_VERSION: ${{ inputs.pnpm-version }}
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.token.outputs.present == 'true'
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install
+        if: steps.token.outputs.present == 'true' && inputs.coverage-command != ''
+        env:
+          OVERRIDE: ${{ inputs.install-command }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OVERRIDE}" ]; then
+            eval "${OVERRIDE}"
+          elif [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            npm ci
+          fi
+
+      # Coverage failing must not fail the analysis. The caller's own test job is what gates the
+      # suite; here a broken coverage run should cost the coverage NUMBER, not the whole scan —
+      # otherwise one flaky test takes the security findings down with it.
+      - name: Coverage
+        if: steps.token.outputs.present == 'true' && inputs.coverage-command != ''
+        continue-on-error: true
+        env:
+          COVERAGE_COMMAND: ${{ inputs.coverage-command }}
+        run: |
+          echo "::group::coverage"
+          eval "${COVERAGE_COMMAND}" || echo "::warning title=Coverage::command failed — scanning without it"
+          echo "::endgroup::"
+
+      # The scanner reads `sonar-project.properties` from the repository root. A caller without
+      # that file gets a scan of everything, including build output, so its absence is an error
+      # here rather than a default.
+      - name: Require sonar-project.properties
+        if: steps.token.outputs.present == 'true'
+        run: |
+          if [ ! -f sonar-project.properties ]; then
+            echo "::error title=SonarQube Cloud::sonar-project.properties is missing from the repository root."
+            echo "Without it the scanner analyses build output and reports a file as a duplicate of its own bundle."
+            exit 1
+          fi
+
+      - name: Analyse
+        if: steps.token.outputs.present == 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: npx --yes sonarqube-scanner@4
