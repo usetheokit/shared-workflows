@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `floors the shared pin cannot reach — result`, a check with a stable name that reports whether
+  the per-package floor runs passed. The runs themselves are named after their matrix entry, which
+  is what makes a failure legible without opening anything — and means the name changes with the
+  repository's declared ranges, so it can never be a required check, and renders uninterpolated
+  when the matrix is empty. This one always reports, fails if any entry failed, and treats a
+  skipped matrix with a non-zero count as a gap rather than a pass. It is the one to mark required
+  (#16)
+
+
 ## [dep-check 0.7.0] - 2026-08-27
 
 ### Added

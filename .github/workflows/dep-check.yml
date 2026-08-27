@@ -458,3 +458,46 @@ jobs:
             echo "| what the shared pin installs | \`${SHARED}\` |"
             echo "| packages run | ${PACKAGES} |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # A stable check name for a job whose real names cannot be stable.
+  #
+  # `floor-per-package` names itself after its matrix entry, which is what makes a failure legible
+  # — you see WHICH floor broke without opening anything. The cost is that the name changes with
+  # the repository's declared ranges, so it can never be a required check, and when the matrix is
+  # empty GitHub renders the uninterpolated expression in the UI.
+  #
+  # This job has one name, always reports, and fails if any matrix entry failed. It is the one to
+  # mark required in branch protection.
+  floor-per-package-result:
+    name: floors the shared pin cannot reach — result
+    needs: [floor-plan, floor-per-package]
+    # `always()` so a skipped matrix still reports. A required check that does not report is
+    # indistinguishable from one that passed, and blocks the pull request forever.
+    if: always() && inputs.run-floor-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report what the extra runs found
+        env:
+          PLAN: ${{ needs.floor-plan.result }}
+          RUNS: ${{ needs.floor-per-package.result }}
+          COUNT: ${{ needs.floor-plan.outputs.count }}
+        run: |
+          set -euo pipefail
+          echo "plan=$PLAN runs=$RUNS count=${COUNT:-0}"
+          if [ "$PLAN" != "success" ]; then
+            echo "::error::could not work out which floors need their own run"
+            exit 1
+          fi
+          if [ "${COUNT:-0}" = "0" ]; then
+            echo "every declared floor is reachable by the shared pin — no extra runs needed"
+            echo "No declared floor is missed by the shared pin, so no extra runs were needed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # `skipped` here means the matrix job never ran despite a non-zero count, which is a
+          # gap, not a pass. Only `success` is a pass.
+          if [ "$RUNS" != "success" ]; then
+            echo "::error::$COUNT floor(s) needed their own run and the result was '$RUNS'"
+            exit 1
+          fi
+          echo "$COUNT floor(s) exercised on their own"
