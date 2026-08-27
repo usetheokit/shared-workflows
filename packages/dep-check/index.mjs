@@ -290,7 +290,9 @@ async function commandAudit() {
             dep,
             ...drift,
             deprecated: Boolean(manifest.deprecated),
-            severity: field === "peerDependencies" ? "contract" : "behind",
+            // Same three-way severity as check C: a floor above latest means the published
+            // package installs nowhere, which outranks a merely stale contract.
+            severity: drift.direction === "ahead" ? "unpublished" : field === "peerDependencies" ? "contract" : "behind",
           });
         }
       }
@@ -301,7 +303,9 @@ async function commandAudit() {
     title: "audit) every published package in the scope",
     findings,
     note: `  Swept ${names.length} published packages. \`deprecated\` means the registry already warns people.`,
-    columns: (f) => `[${f.severity}]${f.deprecated ? "[deprecated]" : ""} ${f.pkg.padEnd(30)} ${f.field.padEnd(17)} ${f.dep.padEnd(20)} ${f.range.padEnd(16)} latest ${f.latest} (${f.majorsBehind} behind)`,
+    columns: (f) =>
+      `[${f.severity}]${f.deprecated ? "[deprecated]" : ""} ${f.pkg.padEnd(30)} ${f.field.padEnd(17)} ${f.dep.padEnd(20)} ${f.range.padEnd(16)} latest ${f.latest} ` +
+      (f.direction === "ahead" ? "(nothing published satisfies this)" : `(${f.majorsBehind} behind)`),
   });
   return 0;
 }
