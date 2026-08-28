@@ -227,6 +227,8 @@ jobs:
             echo "::error::v1 resolves to $actual, expected $SHA"
             exit 1
           fi
-          echo "### v1 advanced" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`v1\` -> \`$SHA\` ($GITHUB_REF_NAME), verified by reading the ref back." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### v1 advanced"
+            echo ""
+            echo "\`v1\` -> \`$SHA\` ($GITHUB_REF_NAME), verified by reading the ref back."
+          } >> "$GITHUB_STEP_SUMMARY"

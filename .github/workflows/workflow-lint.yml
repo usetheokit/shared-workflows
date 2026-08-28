@@ -56,8 +56,27 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # A pull-request checkout is a synthetic merge commit. Its first parent is the base
+          # branch, so depth two is sufficient to decide whether automation changed without
+          # downloading the repository history.
+          fetch-depth: 2
+
+      - name: Detect workflow changes
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "lint=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet HEAD^1 HEAD -- .github/workflows .github/actions action.yml; then
+            echo "lint=false" >> "$GITHUB_OUTPUT"
+            echo "No workflow or local-action changes; expensive linters are not needed."
+          else
+            echo "lint=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: actionlint
+        if: steps.changes.outputs.lint == 'true'
         # The pinned image carries its own shellcheck, so `run:` blocks are linted
         # too — the same check that runs locally, with no toolchain to install.
         # The image reaches the shell as an environment variable rather than being spliced
@@ -72,6 +91,7 @@ jobs:
             -color
 
       - name: zizmor
+        if: steps.changes.outputs.lint == 'true'
         # `--min-severity low` keeps the informational findings out while still
         # failing on anything that is actually a weakness. A finding that is
         # understood and accepted gets a `# zizmor: ignore[rule]` comment WITH the
