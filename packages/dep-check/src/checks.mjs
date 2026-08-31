@@ -168,6 +168,47 @@ export function groupUntestedFloors(untested) {
  * missing dependency is the case this check exists to catch, and it is indistinguishable from the
  * outside if this swallows it. Only the gap is filled, and the caller reports what it filled.
  */
+/**
+ * The peers check D installs from the registry alongside the packed tarball.
+ *
+ * A peer is not inside the tarball — the consumer supplies it — so the check has to supply one too,
+ * or it exercises a tree no consumer will ever have. `@latest` is the right ask for a peer the
+ * registry can answer.
+ *
+ * It is the wrong ask for a peer THIS CUT IS ABOUT TO PUBLISH, and that is what this function
+ * exists to remove. `unpublishedSiblings` already packs such a sibling and hands it over as a file,
+ * but the `@latest` spec was built independently and landed on the same command line. npm honours
+ * the last spec for a name, so the packed tarball lost to the registry copy and the substitution
+ * was defeated by the argument next to it.
+ *
+ * Measured on usetheokit/theokit#604, cutting `@theokit/http@2.0.0` and `theokit@0.64.0` together:
+ *
+ *   npm install <tauri.tgz> <@theokit/http-2.0.0.tgz> <theokit-0.64.0.tgz> theokit@latest
+ *
+ * `theokit@latest` was 0.63.1 — the version that pull request existed to replace — which depends on
+ * `@theokit/http@^1.2.0`. The tree then held `@theokit/http` twice, 2.0.0 packed at the root and
+ * 1.2.0 under the registry's theokit, and check D reported a duplicate. It was right about the tree
+ * it was handed and wrong about the artefact: once `theokit@0.64.0` is published, `theokit@latest`
+ * requires `^2.0.0` and there is one copy. The finding could not outlive the publish that resolved
+ * it, so the check was unsatisfiable BEFORE publishing — for every release that bumps a package and
+ * a sibling depending on it, which is the case `unpublishedSiblings` was written for.
+ *
+ * Narrow on purpose: only a sibling the substitution actually covers is dropped. A peer the
+ * registry can serve keeps its `@latest`, because the point of the leg is to install what a
+ * consumer would get.
+ */
+export function peerInstallSpecs({ references, localSiblings = [] }) {
+  const packed = new Set(localSiblings.map((s) => s.name));
+  const specs = new Set();
+  for (const r of references) {
+    if (r.field !== "peerDependencies") continue;
+    if (LOCAL_PROTOCOL.test(r.range ?? "")) continue;
+    if (packed.has(r.dep)) continue;
+    specs.add(`${r.dep}@latest`);
+  }
+  return [...specs];
+}
+
 export function unpublishedSiblings({ references, workspace, published }) {
   const byName = new Map(workspace.map((p) => [p.name, p]));
   const out = [];
