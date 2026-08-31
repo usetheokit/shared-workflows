@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`@theokit/dep-check` check D no longer contradicts itself on a release that bumps a package and
+  one of its dependents together.** The check installs a package's sibling peers from the registry
+  at `@latest` alongside the packed tarball, and it built that list independently of
+  `unpublishedSiblings` — so when a peer was one this cut was about to publish, `<peer>@latest` and
+  the packed tarball landed on the same `npm install` command line. npm honours the last spec for a
+  name, the registry copy won, and the substitution written to make such a release pass was defeated
+  by the argument next to it.
+
+  Measured on `usetheokit/theokit#604`, cutting `@theokit/http@2.0.0` and `theokit@0.64.0` together:
+  `theokit@latest` was still 0.63.1, which depends on `@theokit/http@^1.2.0`, so the tree carried
+  `@theokit/http` twice and the gate reported a duplicate that could not outlive the publish
+  resolving it. The check was unsatisfiable BEFORE publishing, for exactly the release shape
+  `unpublishedSiblings` exists to support.
+
+  `peerInstallSpecs` now computes that list FROM the substitution, dropping only the peers the
+  packed tarballs already supply. A peer the registry can serve keeps its `@latest`, because the
+  point of the leg is to install what a consumer would actually get.
+
 ### Added
 
 - A reusable SonarQube Cloud analysis workflow (`.github/workflows/sonar.yml`). Callers get a scan

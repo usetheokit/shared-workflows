@@ -21,7 +21,7 @@
  * none of the other three mean anything either.
  */
 import { parseArgs } from "node:util";
-import { ceilingDrift, consumersLeftBehind, groupUntestedFloors, installedDrift, isSibling, pinnableSiblings, rangeFloor, sharedFloor, unpublishedSiblings, untestedFloors } from "./src/checks.mjs";
+import { ceilingDrift, consumersLeftBehind, groupUntestedFloors, installedDrift, isSibling, peerInstallSpecs, pinnableSiblings, rangeFloor, sharedFloor, unpublishedSiblings, untestedFloors } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
 import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
 import { detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
@@ -226,12 +226,13 @@ async function commandInstall(root) {
   for (const p of workspace) published[p.name] = await publishedVersions(p.name);
   for (const pkg of findPublishablePackages(root)) {
     const refs = siblingReferences(pkg.manifest, isSibling);
-    const siblings = refs
-      .filter((r) => r.field === "peerDependencies" && !/^(workspace|link|file|portal):/.test(r.range))
-      .map((r) => `${r.dep}@latest`);
     // What the registry cannot answer yet, taken from the workspace instead. Only the gap —
     // see `unpublishedSiblings`.
     const localSiblings = unpublishedSiblings({ references: refs, workspace, published });
+    // Computed AFTER the substitution and from it: a peer this cut is about to publish must not
+    // also be asked for as `@latest`, or the registry copy overrides the packed one on the same
+    // command line — see `peerInstallSpecs`.
+    const siblings = peerInstallSpecs({ references: refs, localSiblings });
     const result = installFromTarball({ packageDir: pkg.dir, repoRoot: root, alsoInstall: siblings, localSiblings });
     for (const s of result.substituted ?? []) substitutions.push({ pkg: pkg.manifest.name, ...s });
     if (!result.installed) {
