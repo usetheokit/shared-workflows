@@ -227,6 +227,85 @@ jobs:
           refuses ''
           refuses '   '
 
+  manifest-check-action:
+    name: manifest-check action
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.12'
+
+      # Through the action, against this repository's own two packages.
+      - name: It accepts this repository
+        uses: ./actions/manifest-check
+
+      # A guard is only a guard if something has watched it refuse. Each rule is fed a
+      # manifest that breaks exactly that rule, in a subshell so a correct refusal does not
+      # fail this job — and one case that must be ACCEPTED, because a check that refuses
+      # everything is not a check either.
+      - name: It refuses each defect, and accepts a bin-only package
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$(mktemp -d)"
+          write() { python3 -c "
+          import json, sys
+          base = json.load(open('base.json'))
+          exec(sys.argv[1])
+          json.dump(base, open(sys.argv[2] + '/package.json', 'w'))
+          " "$1" "$dir"; }
+          cat > base.json <<'JSON'
+          { "name": "fixture", "description": "d", "license": "MIT", "files": ["dist"],
+            "engines": { "node": ">=22.12.0" },
+            "repository": { "type": "git", "url": "https://github.com/o/r" },
+            "publishConfig": { "access": "public", "provenance": true },
+            "bugs": { "url": "https://github.com/o/r/issues" },
+            "homepage": "https://github.com/o/r#readme",
+            "keywords": ["a"], "sideEffects": false,
+            "exports": { ".": { "types": "./d.ts", "import": "./i.js" },
+                         "./package.json": "./package.json" } }
+          JSON
+          refuses() {
+            write "$1"
+            if MANIFEST_ROOT="$dir" node ./actions/manifest-check/check.mjs >/dev/null 2>&1; then
+              echo "::error::the guard ACCEPTED: $2"
+              exit 1
+            fi
+            echo "refused $2 — correct"
+          }
+          accepts() {
+            write "$1"
+            if ! MANIFEST_ROOT="$dir" node ./actions/manifest-check/check.mjs >/dev/null 2>&1; then
+              echo "::error::the guard REFUSED: $2"
+              exit 1
+            fi
+            echo "accepted $2 — correct"
+          }
+
+          accepts "pass" "a complete manifest"
+          refuses "del base['exports']['./package.json']" "no ./package.json export"
+          refuses "base['exports']['.'] = {'import': './i.js', 'types': './d.ts'}" "types after import"
+          refuses "del base['sideEffects']" "sideEffects undeclared"
+          refuses "base['publishConfig']['provenance'] = False" "provenance off"
+          refuses "base['repository'] = 'o/r'" "repository as a string"
+          refuses "del base['keywords']" "no keywords"
+          refuses "base['keywords'] = []" "empty keywords"
+          refuses "del base['license']" "no license"
+          refuses "del base['exports']" "no exports and not bin-only"
+          accepts "base['bin'] = {'x': './x.js'}; base.pop('exports', None); base.pop('sideEffects', None)" "a bin-only CLI"
+
+          # A run that finds nothing verified nothing, and must say so rather than pass.
+          empty="$(mktemp -d)"
+          if MANIFEST_ROOT="$empty" node ./actions/manifest-check/check.mjs >/dev/null 2>&1; then
+            echo "::error::the guard ACCEPTED a directory with no publishable manifest"
+            exit 1
+          fi
+          echo "refused an empty directory — correct"
+
   # `v1` is the ref every consumer resolves, and a change that does not reach it did not ship.
   #
   # The release moves it after a publish (release.yml), which covers a change that bumps the
@@ -237,7 +316,7 @@ jobs:
   # So `v1` follows `main`, with one condition.
   advance-v1:
     name: advance v1 to main
-    needs: [test, setup-action, npm-oidc-action, checks-pass-action]
+    needs: [test, setup-action, npm-oidc-action, checks-pass-action, manifest-check-action]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
