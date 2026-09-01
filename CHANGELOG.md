@@ -79,6 +79,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses outright while pre mode is on (`Snapshot release is not allowed in pre mode`). The last
   step asserts `HEAD` never moved, so a future edit cannot turn that ephemeral exit into a real one.
 
+- **`.github/workflows/preview.yml`** — per-commit package previews via pkg.pr.new, reusable by
+  every repository instead of living in one. A fix here is unverifiable from a sibling repository
+  until it is on a registry; nine publishable repositories depend on each other, so that gap is
+  where this ecosystem's expensive defects live. Previews cost nothing and burn no npm version,
+  which is why they are the first thing to reach for — `actions/snapshot` is for when the answer
+  has to come from registry.npmjs.org specifically.
+
+  A reusable workflow rather than a composite action, and the difference from `actions/snapshot`
+  is not stylistic: nothing here talks to npm, so there is no trusted-publisher constraint forcing
+  the steps into the caller's job.
+
+  The publishable-package list is derived from the `private` flag across `packages/*` and `apps/*`
+  — handing pkg-pr-new a private package is undocumented behaviour. Verified identical to
+  `theokit-sdk`'s own `list-publishable-packages.mjs` across all seven changesets repositories.
+
 ## [dep-check 0.9.1] - 2026-08-27
 
 ### Fixed
