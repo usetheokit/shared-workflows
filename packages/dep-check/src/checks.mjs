@@ -204,7 +204,27 @@ export function peerInstallSpecs({ references, localSiblings = [] }) {
     if (r.field !== "peerDependencies") continue;
     if (LOCAL_PROTOCOL.test(r.range ?? "")) continue;
     if (packed.has(r.dep)) continue;
-    specs.add(`${r.dep}@latest`);
+
+    // `@latest` is the right ask for a stable line and the WRONG one for a prerelease line. A
+    // package published on a prerelease channel declares the peer it was built against — after
+    // `changeset version` in pre mode, `@theokit/sdk-tools@0.27.4-next.0` asks for
+    // `@theokit/sdk@">=4.63.4-next.0"` — and `latest` is 4.63.3, so npm answers ERESOLVE and the
+    // gate reports a package nobody can install. The package IS installable; it was paired with
+    // the wrong sibling.
+    //
+    // No range string can admit future prereleases (semver by design), so the rewrite is not
+    // avoidable and this is where it has to be understood. Measured 2026-09-01 on
+    // usetheokit/theokit-sdk#510.
+    //
+    // The floor is only used when it names a prerelease. On a stable line `@latest` stays the ask,
+    // because the question there is whether a consumer taking the current release can install this.
+    let floor = null;
+    try {
+      floor = semver.minVersion(r.range ?? "");
+    } catch {
+      floor = null;
+    }
+    specs.add(floor && semver.prerelease(floor) ? `${r.dep}@${floor.version}` : `${r.dep}@latest`);
   }
   return [...specs];
 }
