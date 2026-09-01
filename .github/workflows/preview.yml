@@ -1,0 +1,169 @@
+name: Preview releases
+
+# Reusable per-commit package previews via pkg.pr.new, for the Theokit ecosystem.
+#
+#   jobs:
+#     preview:
+#       uses: usetheokit/shared-workflows/.github/workflows/preview.yml@v1 # zizmor: ignore[unpinned-uses]
+#
+# ## What it answers, and what it does not
+#
+# A fix in one repository is unverifiable from another until it is ON A REGISTRY: an example or a
+# sibling package that resolves through a workspace tests the repository it lives in, not the
+# experience of the person who typed `npm install`. This ecosystem has nine publishable
+# repositories that depend on each other, so that gap is where its expensive defects live —
+# measured 2026-08-31, `@theokit/http` reached 2.0.0 in one repository while three packages in
+# another declared a range excluding it, and nothing found out until a release gate ran.
+#
+# Two mechanisms answer two different questions:
+#
+#   THIS workflow              a preview per commit, on pkg.pr.new's own registry, NEVER npm.
+#                              Costs nothing, burns no version, exists for iteration.
+#   actions/snapshot           a real npm publish under a non-`latest` dist-tag. Burns an
+#                              immutable npm version, permanently. For when the answer has to
+#                              come from registry.npmjs.org specifically.
+#
+# Reach for this one first.
+#
+# ## It is a reusable workflow, unlike actions/snapshot
+#
+# That difference is not stylistic. The snapshot publishes to npm, so it must run inside the
+# caller's job for the OIDC token to be minted by `release.yml` and match the trusted-publisher
+# connection. Nothing here talks to registry.npmjs.org, so there is no such constraint and the
+# caller gets one `uses:` line instead of a job it has to assemble.
+#
+# Requires the `pkg-pr-new` GitHub App on the organisation — it is what posts the pull request
+# comment. Without it the publish still runs and no comment appears, which reads as the tool being
+# broken rather than uninstalled. Installed on usetheokit 2026-08-31.
+
+on:
+  workflow_call:
+    inputs:
+      build-command:
+        description: 'Builds the packages. A preview must be installable, so this has to run.'
+        type: string
+        default: 'pnpm run build'
+      packages-command:
+        description: >-
+          Prints one publishable package directory per line. Leave empty to derive the list from
+          the `private` flag across packages/* and apps/*. Pass a command when the repository
+          already enumerates publishable packages for its release guards — a second definition of
+          "publishable" is free to drift from the one the release path uses.
+        type: string
+        default: ''
+      pkg-pr-new-version:
+        description: >-
+          Pinned so a preview cannot silently change tool version between commits. Ignored when
+          `publish-command` is given.
+        type: string
+        default: '0.0.88'
+      publish-command:
+        description: >-
+          Publishes the previews. `$DIRS` holds the derived package directories, space separated.
+          Leave empty to run `pnpm dlx pkg-pr-new@<version>`. Pass `pnpm exec pkg-pr-new publish
+          $DIRS` in a repository that carries the tool in its own lockfile — resolving it from
+          there is the tool's own CI guidance, and it is stricter than a pinned dlx.
+        type: string
+        default: ''
+      timeout-minutes:
+        type: number
+        default: 20
+
+# pkg.pr.new authenticates as its own GitHub App and comments as itself. It needs nothing from
+# GITHUB_TOKEN, so this job holds nothing.
+permissions: {}
+
+jobs:
+  preview:
+    name: Publish a preview of every publishable package
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        # No `version:` — the action reads `packageManager` from package.json, already the single
+        # authority on the pnpm version.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+          # Keyed on package.json as well as the lockfile, so a pnpm major bump cannot restore a
+          # store the new pnpm reads as inconsistent.
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            package.json
+          # NO `registry-url`: it writes an npmrc declaring a credential that does not exist here,
+          # and nothing in this job talks to registry.npmjs.org.
+      - run: pnpm install --frozen-lockfile
+
+      # The full quality gate deliberately does NOT run here: CI grades this same commit in
+      # parallel, and a preview that took six minutes would stop being reached for. Nothing
+      # published here reaches anyone who did not paste its URL.
+      - name: Build
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: eval "${BUILD_COMMAND}"
+
+      - name: List the publishable packages
+        env:
+          PACKAGES_COMMAND: ${{ inputs.packages-command }}
+        run: |
+          set -euo pipefail
+
+          # Written to a file rather than passed through argv. JavaScript inside shell inside YAML
+          # is the quoting hazard that produced a real command-substitution bug in this ecosystem's
+          # release workflow, and this script has to survive being read by whoever debugs it.
+          cat > /tmp/list-publishable.mjs <<'NODE'
+          import { readdirSync, readFileSync, existsSync } from 'node:fs'
+          import { join } from 'node:path'
+
+          // Derived from the `private` flag, never from a glob. Handing pkg-pr-new a private
+          // package is undocumented behaviour, and betting on it is how a preview starts
+          // publishing something nobody meant to publish.
+          const dirs = []
+          for (const root of ['packages', 'apps']) {
+            if (!existsSync(root)) continue
+            for (const entry of readdirSync(root, { withFileTypes: true })) {
+              if (!entry.isDirectory()) continue
+              const manifest = join(root, entry.name, 'package.json')
+              if (!existsSync(manifest)) continue
+              const pkg = JSON.parse(readFileSync(manifest, 'utf8'))
+              if (pkg.private === true || !pkg.name) continue
+              dirs.push(`./${join(root, entry.name)}`)
+            }
+          }
+          if (dirs.length === 0) {
+            console.error('no publishable package found under packages/ or apps/ — the enumeration is wrong, not the repository')
+            process.exit(1)
+          }
+          for (const dir of dirs) console.log(dir)
+          NODE
+
+          if [ -n "$PACKAGES_COMMAND" ]; then
+            eval "${PACKAGES_COMMAND}" > /tmp/publishable.txt
+          else
+            node /tmp/list-publishable.mjs > /tmp/publishable.txt
+          fi
+
+          count=$(wc -l < /tmp/publishable.txt)
+          echo "previewing ${count} package(s):"
+          sed 's/^/  /' /tmp/publishable.txt
+
+      - name: Publish a preview per publishable package
+        env:
+          PKG_PR_NEW_VERSION: ${{ inputs.pkg-pr-new-version }}
+          PUBLISH_COMMAND: ${{ inputs.publish-command }}
+        run: |
+          set -euo pipefail
+          mapfile -t dirs < /tmp/publishable.txt
+          if [ -n "$PUBLISH_COMMAND" ]; then
+            # Through the environment and `eval`, the convention `sonar.yml` sets for
+            # `coverage-command`. `$DIRS` is what the caller's command interpolates.
+            DIRS="${dirs[*]}" eval "${PUBLISH_COMMAND}"
+          else
+            # Pinned rather than floating, so a preview cannot silently change tool version
+            # between commits.
+            pnpm dlx "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}"
+          fi
