@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **New `actions/manifest-check`:** the published-manifest contract, checked instead of remembered.
+  Audited across 50 publishable packages on 2026-09-01, and every rule is a defect that was found
+  rather than a style someone preferred: 38 did not export `./package.json`, 30 had no `keywords`,
+  18 declared no `sideEffects` at all, 12 had no `bugs` and 12 no `homepage`.
+
+  The first was reproduced, not argued — `require('@theokit/di/package.json')` threw
+  `ERR_PACKAGE_PATH_NOT_EXPORTED` while `@mastra/core` resolved. Bundlers, test-runner resolvers and
+  version telemetry read that subpath.
+
+  `sideEffects` must be DECLARED and may be any value: the check refuses silence, not a particular
+  answer, because the right answer is not always `false`. `@theokit/di-agent` carries a module-scope
+  `import "reflect-metadata"` in sixteen files, so `false` there would authorise a bundler to delete
+  the polyfill and leave decorators without metadata in a consumer's production build.
+
+  Two things this locks in that were already right: `types` is the first condition in all 50 exports
+  maps — Node resolves conditions in declaration order, so a `types` after `import` is never reached
+  — and every package publishes with `provenance: true`, which neither `next` nor `@mastra/core`
+  does.
+
 - **New `actions/checks-pass`:** a fan-in so ONE required status check can stand for every job in a
   workflow. Branch protection requires checks BY NAME, so every job added afterwards is advisory
   until somebody edits the list in every repository by hand. Measured across the ecosystem on

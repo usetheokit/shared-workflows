@@ -1,0 +1,61 @@
+name: Manifest check
+description: >-
+  Verify every publishable package.json against the ecosystem's published-manifest
+  contract.
+
+# ## Why this is a gate and not a convention
+#
+# Audited across 50 publishable packages on 2026-09-01. The contract existed nowhere,
+# so each manifest had drifted on its own:
+#
+#     38/50  did not export "./package.json"
+#     30/50  had no keywords
+#     18/50  declared no sideEffects at all
+#     12/50  had no bugs, 12 no homepage
+#
+# The first is not cosmetic and was reproduced rather than argued:
+#
+#     $ npm i @theokit/di @mastra/core
+#     FAIL @theokit/di/package.json -> ERR_PACKAGE_PATH_NOT_EXPORTED
+#     OK   @mastra/core/package.json -> 1.63.2
+#
+# Bundlers, test-runner resolvers and version telemetry read that subpath. `@mastra/core`
+# exports it; we did not.
+#
+# Where we were already ahead of both references and this check keeps us: `types` is the
+# FIRST condition in all 50 exports maps — Node resolves conditions in declaration order,
+# so a `types` after `import` is never reached by tsc — and every package publishes with
+# `provenance: true`, which neither `next` nor `@mastra/core` does.
+#
+# ## sideEffects must be DECLARED, not `false`
+#
+# The check refuses silence, not a particular answer. Measured here: `@theokit/di-agent`
+# carries a module-scope `import "reflect-metadata"` in sixteen files, so `false` there
+# authorises a bundler to delete the polyfill and decorators lose their metadata in a
+# consumer's production build — green everywhere, broken at runtime. It declares `true`.
+# `@theokit/studio` ships CSS and declares `["**/*.css"]`. The other sixteen are `false`.
+#
+# A first pass of this audit reported `@theokit/di` as unsafe too. It was not: its
+# `Reflect.defineMetadata` calls sit inside the function a decorator returns, not at module
+# scope. The grep that found them matched any indentation. Read what a match IS before
+# acting on it.
+
+inputs:
+  root:
+    description: 'Directory to scan. Defaults to the checkout root.'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Every publishable manifest satisfies the contract
+      shell: bash
+      env:
+        MANIFEST_ROOT: ${{ inputs.root }}
+      # The logic lives in a file so the CI job that exercises it runs the same bytes this
+      # does, instead of a copy that can rot apart from it.
+      run: |
+        set -euo pipefail
+        export MANIFEST_ROOT="${MANIFEST_ROOT:-$GITHUB_WORKSPACE}"
+        node "${GITHUB_ACTION_PATH}/check.mjs"
