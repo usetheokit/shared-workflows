@@ -1,0 +1,76 @@
+name: Checks pass
+description: >-
+  Fan-in for a workflow's jobs. Fails unless every job it depends on succeeded,
+  so ONE required status check can stand for all of them.
+
+# ## Why this exists
+#
+# Branch protection requires status checks BY NAME. Every job added to a workflow
+# afterwards is therefore advisory until somebody remembers to add its name to the
+# list, in every repository, by hand. Measured across this ecosystem on 2026-09-01:
+#
+#   repo              required   ran on the last PR
+#   theokit                 14                   52
+#   theokit-ui               5                   30
+#   theokit-sdk              5                   20
+#
+# The drift is not evenly distributed over unimportant jobs. `release channel` —
+# the gate that stops a stable publish moving the `latest` dist-tag for every
+# consumer — was required in ZERO repositories the week it was written. It ran, it
+# reported, and a red one blocked nothing.
+#
+# A fan-in fixes the class rather than the instances: the required name stops being
+# a list somebody maintains and becomes a property of the workflow. A job added
+# tomorrow is covered the moment it is listed in `needs:`.
+#
+# ## Usage
+#
+#     checks-pass:
+#       name: CI
+#       if: always()            # REQUIRED — without it a failed dependency skips
+#       needs: [verify, sonar, release-channel]
+#       runs-on: ubuntu-latest
+#       steps:
+#         - uses: usetheokit/shared-workflows/actions/checks-pass@v1
+#           with:
+#             needs: ${{ toJSON(needs) }}
+#
+# `if: always()` is not optional. Without it GitHub skips this job when any
+# dependency fails, a skipped required check never reports, and the pull request
+# waits forever on a green light that cannot arrive.
+#
+# ## Why not re-actors/alls-green
+#
+# It exists and does this. It was not used, and the trade is worth stating rather
+# than implying: this is the one gate that decides whether every OTHER gate is
+# binding, so a third-party action here is a supply-chain dependency on the root of
+# the trust chain. Twenty lines of bash we can read is the cheaper side of that
+# trade. The cost is ours to maintain, and this file is the whole of it.
+
+inputs:
+  needs:
+    description: >-
+      `${{ toJSON(needs) }}` from the calling job. Anything else is a mistake the
+      action cannot detect — it sees the JSON, not where it came from.
+    required: true
+  allowed-skips:
+    description: >-
+      Job ids, whitespace- or comma-separated, that may report `skipped` without
+      failing this check. Everything else that skips is a failure: a job that did
+      not run reads exactly like a job that passed, which is the failure this action
+      exists to prevent. Name the conditional jobs explicitly, and say why in the
+      caller.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Every dependency succeeded
+      shell: bash
+      env:
+        NEEDS: ${{ inputs.needs }}
+        ALLOWED_SKIPS: ${{ inputs.allowed-skips }}
+      # The logic lives in a file so the CI job that exercises its refusals runs the
+      # same bytes this does, instead of a copy that can rot apart from it.
+      run: bash "${GITHUB_ACTION_PATH}/check.sh"

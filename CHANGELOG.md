@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **New `actions/checks-pass`:** a fan-in so ONE required status check can stand for every job in a
+  workflow. Branch protection requires checks BY NAME, so every job added afterwards is advisory
+  until somebody edits the list in every repository by hand. Measured across the ecosystem on
+  2026-09-01: `theokit` required 14 of the 52 checks that ran, `theokit-ui` 5 of 30, `theokit-sdk` 5
+  of 20 — and `release channel`, the gate that stops a stable publish moving the `latest` dist-tag
+  for every consumer, was required in ZERO repositories the week it was written. The fan-in makes
+  the required name a property of the workflow instead of a list somebody maintains.
+
+  A skipped dependency FAILS unless the caller names it in `allowed-skips`: a job that did not run
+  reads exactly like a job that passed, which is the failure being closed, so it is not waived by
+  default. The logic lives in `check.sh` rather than inline in `action.yml`, so the CI job that
+  exercises its ten refusals runs the same bytes the action does instead of a copy that can rot
+  apart from it.
+
 - **`dep-check` 0.9.4:** check D now decides by SATISFACTION rather than by appearance. It asks for
   `@latest` when the served version satisfies the declared range, and for the range's floor only
   when it does not. 0.9.3 keyed on "the floor looks like a prerelease" and got the second shape
