@@ -1,6 +1,6 @@
 {
   "name": "@theokit/dep-check",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "The ecosystem dependency gate: does a package's declared range still describe the sibling it ships against? Four checks, kept apart by what they need to answer and therefore by whether they may fail a build.",
   "type": "module",
   "engines": {
