@@ -472,6 +472,27 @@ describe("peerInstallSpecs — what check D may ask the registry for alongside t
     expect(peerInstallSpecs({ references: refs, localSiblings })).toEqual([]);
   });
 
+  it("asks for the version a prerelease peer range names, not `latest`", () => {
+    // After `changeset version` in pre mode every internal peer range points at the prerelease
+    // being cut. `latest` is still the previous stable, so asking for it makes npm answer ERESOLVE
+    // and the gate reports a package nobody can install — when the package is installable and was
+    // simply paired with the wrong sibling. Measured on usetheokit/theokit-sdk#510.
+    const refs = [{ field: "peerDependencies", dep: "@theokit/sdk", range: ">=4.63.4-next.0" }];
+    expect(peerInstallSpecs({ references: refs, localSiblings: [] })).toEqual([
+      "@theokit/sdk@4.63.4-next.0",
+    ]);
+  });
+
+  it("keeps `latest` for a stable range, which is the question that line asks", () => {
+    const refs = [{ field: "peerDependencies", dep: "theokit", range: "^0.64.0" }];
+    expect(peerInstallSpecs({ references: refs, localSiblings: [] })).toEqual(["theokit@latest"]);
+  });
+
+  it("falls back to `latest` rather than throwing on an unparseable range", () => {
+    const refs = [{ field: "peerDependencies", dep: "x", range: "nonsense" }];
+    expect(peerInstallSpecs({ references: refs, localSiblings: [] })).toEqual(["x@latest"]);
+  });
+
   it("test_keeps_the_siblings_the_substitution_does_not_cover", () => {
     // Narrow, not blanket: one peer is being published by this cut and one is not, and only the
     // first is dropped. Dropping both would stop exercising a peer the registry can serve.

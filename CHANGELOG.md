@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`dep-check`:** check D asks for the version a prerelease peer range NAMES, instead of `@latest`.
+  After `changeset version` in prerelease mode every internal peer range points at the prerelease
+  being cut — `@theokit/sdk-tools@0.27.4-next.0` asks for `@theokit/sdk@">=4.63.4-next.0"` — while
+  `latest` is still the previous stable. npm then answers ERESOLVE and the gate reported a package
+  nobody can install, when the package was installable and had been paired with the wrong sibling.
+  No range string can admit future prereleases (semver by design), so the rewrite is not avoidable
+  and this is where it has to be understood. `@latest` stays the ask on a stable line, which is the
+  question that line asks. Measured on usetheokit/theokit-sdk#510.
+
+### Fixed
+
 - **`@theokit/dep-check` check D no longer contradicts itself on a release that bumps a package and
   one of its dependents together.** The check installs a package's sibling peers from the registry
   at `@latest` alongside the packed tarball, and it built that list independently of
