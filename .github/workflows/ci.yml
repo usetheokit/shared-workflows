@@ -176,6 +176,57 @@ jobs:
           done
 
 
+  checks-pass-action:
+    name: checks-pass action
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Through the action, the way a caller uses it.
+      - name: It accepts a set of successes
+        uses: ./actions/checks-pass
+        with:
+          needs: '{"verify":{"result":"success"},"sonar":{"result":"success"}}'
+
+      - name: It accepts a skip that was declared
+        uses: ./actions/checks-pass
+        with:
+          needs: '{"verify":{"result":"success"},"optional":{"result":"skipped"}}'
+          allowed-skips: optional
+
+      # A guard is only a guard if something has watched it refuse. These run
+      # `check.sh` directly — the same file the action runs, not a copy — in a
+      # subshell, so a correct refusal does not fail this job.
+      #
+      # The empty-input case is not hypothetical. It PASSED while this was being
+      # written: jq reads empty stdin as no documents and exits 0, so the type test
+      # succeeded over nothing. A green light over nothing, inside the thing built to
+      # refuse one.
+      - name: It refuses everything it promises to refuse
+        shell: bash
+        run: |
+          set -euo pipefail
+          refuses() {
+            if NEEDS="$1" ALLOWED_SKIPS="${2:-}" bash ./actions/checks-pass/check.sh >/dev/null 2>&1; then
+              echo "::error::the guard ACCEPTED needs='$1' allowed-skips='${2:-}'"
+              exit 1
+            fi
+            echo "refused needs='$1' allowed-skips='${2:-}' — correct"
+          }
+          refuses '{"a":{"result":"failure"}}'
+          refuses '{"a":{"result":"cancelled"}}'
+          refuses '{"a":{"result":"skipped"}}'
+          refuses '{"a":{"result":"skipped"},"b":{"result":"skipped"}}' 'a'
+          refuses '{"ab":{"result":"skipped"}}' 'a'
+          refuses '{}'
+          refuses '[]'
+          refuses 'not-json'
+          refuses ''
+          refuses '   '
+
   # `v1` is the ref every consumer resolves, and a change that does not reach it did not ship.
   #
   # The release moves it after a publish (release.yml), which covers a change that bumps the
@@ -186,7 +237,7 @@ jobs:
   # So `v1` follows `main`, with one condition.
   advance-v1:
     name: advance v1 to main
-    needs: [test, setup-action, npm-oidc-action]
+    needs: [test, setup-action, npm-oidc-action, checks-pass-action]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
