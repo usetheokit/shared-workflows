@@ -94,6 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — handing pkg-pr-new a private package is undocumented behaviour. Verified identical to
   `theokit-sdk`'s own `list-publishable-packages.mjs` across all seven changesets repositories.
 
+  The package manager is detected from the lockfile rather than assumed — the shape `sonar.yml`
+  already sets, with an `install-command` override. Nine repositories here use pnpm and one uses
+  npm, and a workflow that assumed pnpm simply left that one without previews, which is how a
+  shared mechanism quietly becomes an eight-of-nine mechanism. `build-command` accepts an empty
+  string for a package that publishes its sources, so "no build" is stated rather than worked
+  around.
+
 ## [dep-check 0.9.1] - 2026-08-27
 
 ### Fixed

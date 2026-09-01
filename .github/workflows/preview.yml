@@ -40,9 +40,18 @@ on:
   workflow_call:
     inputs:
       build-command:
-        description: 'Builds the packages. A preview must be installable, so this has to run.'
+        description: >-
+          Builds the packages. A preview must be installable, so this normally has to run. Pass an
+          empty string for a repository that publishes its sources with no build step — skipping is
+          then correct, not a shortcut.
         type: string
         default: 'pnpm run build'
+      install-command:
+        description: >-
+          Override when the repository does not install with a frozen pnpm lockfile. Left empty the
+          manager is detected from the lockfile, the shape `sonar.yml` already sets.
+        type: string
+        default: ''
       packages-command:
         description: >-
           Prints one publishable package directory per line. Leave empty to derive the list from
@@ -82,13 +91,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Which manager, decided by the lockfile on disk rather than assumed. Nine repositories
+      # here use pnpm and one uses npm, and a workflow that assumed pnpm simply left that one
+      # without previews — which is how a shared mechanism quietly becomes an eight-of-nine
+      # mechanism.
+      - name: Which package manager
+        id: detect
+        run: |
+          set -euo pipefail
+          if [ -f pnpm-lock.yaml ]; then echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+          else echo "manager=npm" >> "$GITHUB_OUTPUT"; fi
+
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        if: steps.detect.outputs.manager == 'pnpm'
         # No `version:` — the action reads `packageManager` from package.json, already the single
         # authority on the pnpm version.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: '.nvmrc'
-          cache: 'pnpm'
+          cache: ${{ steps.detect.outputs.manager }}
           # Keyed on package.json as well as the lockfile, so a pnpm major bump cannot restore a
           # store the new pnpm reads as inconsistent.
           cache-dependency-path: |
@@ -96,7 +117,15 @@ jobs:
             package.json
           # NO `registry-url`: it writes an npmrc declaring a credential that does not exist here,
           # and nothing in this job talks to registry.npmjs.org.
-      - run: pnpm install --frozen-lockfile
+      - name: Install
+        env:
+          OVERRIDE: ${{ inputs.install-command }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OVERRIDE}" ]; then eval "${OVERRIDE}"
+          elif [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+          else npm ci
+          fi
 
       # The full quality gate deliberately does NOT run here: CI grades this same commit in
       # parallel, and a preview that took six minutes would stop being reached for. Nothing
@@ -104,7 +133,13 @@ jobs:
       - name: Build
         env:
           BUILD_COMMAND: ${{ inputs.build-command }}
-        run: eval "${BUILD_COMMAND}"
+        run: |
+          set -euo pipefail
+          if [ -z "${BUILD_COMMAND}" ]; then
+            echo "no build step declared — publishing the sources as they are"
+            exit 0
+          fi
+          eval "${BUILD_COMMAND}"
 
       - name: List the publishable packages
         env:
@@ -165,5 +200,9 @@ jobs:
           else
             # Pinned rather than floating, so a preview cannot silently change tool version
             # between commits.
-            pnpm dlx "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}"
+            if [ -f pnpm-lock.yaml ]; then
+              pnpm dlx "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}"
+            else
+              npx --yes "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}"
+            fi
           fi
