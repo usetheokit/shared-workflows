@@ -52,6 +52,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   native bindings, bubblewrap) that reproducing here would only duplicate. The two coverage inputs
   are mutually exclusive and the workflow refuses a caller that sets both.
 
+
+### Added
+
+- **`@theokit/release-channel` + `actions/release-channel`** — a guard that refuses a release whose
+  declared channel and actual changesets prerelease state disagree. `changeset pre exit`, a bad
+  merge, or a conflict resolved the wrong way removes `.changeset/pre.json`; nothing errors; the
+  next release publishes a stable version, moves the `latest` dist-tag for every consumer, and
+  reports success. The guard requires two facts to agree — `"releaseChannel"` in the root manifest
+  and `pre.json` — so cutting a stable release stays possible and becomes deliberate: it takes an
+  edit a reviewer sees in the diff. 23 tests, including that a corrupt `pre.json` is never read as
+  "we are on latest", which is the direction that publishes.
+
+- **`actions/snapshot`** — publishes the current tree under a dist-tag that is never `latest`, so a
+  change is installable from the registry before it is merged, including from another repository.
+  A monorepo snapshots so a reviewer can install a pull request; an ecosystem of separate
+  repositories needs it for the sharper case — `@theokit/http` reaching 2.0.0 in one repository
+  while another declares a range that excludes it, which on 2026-08-31 left three published
+  packages uninstallable by any npm user until a release gate found it.
+
+  A composite action rather than a reusable workflow, deliberately: the steps run inside the
+  caller's job, so the OIDC token is still minted by `release.yml` and every npm trusted-publisher
+  connection — which matches per package, per repository and per workflow file — keeps matching.
+
+  It exits prerelease mode **in the runner's copy only**, because `changeset version --snapshot`
+  refuses outright while pre mode is on (`Snapshot release is not allowed in pre mode`). The last
+  step asserts `HEAD` never moved, so a future edit cannot turn that ephemeral exit into a real one.
+
 ## [dep-check 0.9.1] - 2026-08-27
 
 ### Fixed
