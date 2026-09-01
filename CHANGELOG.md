@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exercises its ten refusals runs the same bytes the action does instead of a copy that can rot
   apart from it.
 
+  One constraint found by CI rather than by reading: the runner evaluates expressions inside a
+  manifest's `description`, and `needs` is not a named value in an action's context — so spelling the
+  usage example out in that field fails the whole action to load. The example lives in a comment.
+
 - **`dep-check` 0.9.4:** check D now decides by SATISFACTION rather than by appearance. It asks for
   `@latest` when the served version satisfies the declared range, and for the range's floor only
   when it does not. 0.9.3 keyed on "the floor looks like a prerelease" and got the second shape

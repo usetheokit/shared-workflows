@@ -50,8 +50,14 @@ description: >-
 inputs:
   needs:
     description: >-
-      `${{ toJSON(needs) }}` from the calling job. Anything else is a mistake the
-      action cannot detect — it sees the JSON, not where it came from.
+      The calling job's `needs` context, serialised — see the usage block above for
+      the exact expression. It is written there and not here because the runner
+      evaluates expressions inside a manifest's `description`, and `needs` is not a
+      named value in an action's context: an example spelled out in this field fails
+      the whole action to load, which is how this line was found.
+
+      Anything else passed here is a mistake the action cannot detect — it sees the
+      JSON, not where it came from.
     required: true
   allowed-skips:
     description: >-
