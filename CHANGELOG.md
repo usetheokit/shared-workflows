@@ -52,6 +52,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   native bindings, bubblewrap) that reproducing here would only duplicate. The two coverage inputs
   are mutually exclusive and the workflow refuses a caller that sets both.
 
+
+### Added
+
+- **`@theokit/release-channel` + `actions/release-channel`** — a guard that refuses a release whose
+  declared channel and actual changesets prerelease state disagree. `changeset pre exit`, a bad
+  merge, or a conflict resolved the wrong way removes `.changeset/pre.json`; nothing errors; the
+  next release publishes a stable version, moves the `latest` dist-tag for every consumer, and
+  reports success. The guard requires two facts to agree — `"releaseChannel"` in the root manifest
+  and `pre.json` — so cutting a stable release stays possible and becomes deliberate: it takes an
+  edit a reviewer sees in the diff. 23 tests, including that a corrupt `pre.json` is never read as
+  "we are on latest", which is the direction that publishes.
+
 ## [dep-check 0.9.1] - 2026-08-27
 
 ### Fixed

@@ -1,0 +1,32 @@
+{
+  "name": "@theokit/release-channel",
+  "version": "0.1.0",
+  "description": "Guards the boundary between a prerelease channel and `latest`: the channel a repository declares and the state changesets is actually in must agree, so an accidental `pre exit` cannot publish a stable version in silence.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "bin": {
+    "release-channel": "./index.mjs"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/usetheokit/shared-workflows/tree/main/packages/release-channel#readme",
+  "bugs": "https://github.com/usetheokit/shared-workflows/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/usetheokit/shared-workflows.git",
+    "directory": "packages/release-channel"
+  },
+  "keywords": ["changesets", "prerelease", "dist-tag", "release", "ci", "theokit"],
+  "files": ["index.mjs", "src", "README.md", "LICENSE"],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

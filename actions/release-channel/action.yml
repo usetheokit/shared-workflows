@@ -1,0 +1,41 @@
+name: 'Release channel guard'
+description: >-
+  Refuses a release whose declared channel and changesets prerelease state disagree, so an
+  accidental `pre exit` cannot publish a stable version and move `latest` in silence.
+
+# A COMPOSITE ACTION rather than a reusable workflow, for the reason `actions/setup` records: this
+# is a step inside somebody else's job — it needs the caller's checked-out tree, and it has nothing
+# to run on a runner of its own.
+#
+#   - uses: usetheokit/shared-workflows/actions/release-channel@v1
+#
+# Put it in TWO places, not one:
+#
+#   ci.yml       on every pull request  — catches the drift before it is merged
+#   release.yml  immediately before the publish step — the last line, for the path that reached a
+#                release without passing through CI
+#
+# It reads two facts and requires them to agree:
+#
+#   package.json      "releaseChannel": "next"   the sentence a reviewer sees in a diff
+#   .changeset/pre.json   { mode: "pre", tag: "next" }   what changesets will actually do
+#
+# Cutting a stable release stays possible and becomes deliberate: set `latest` and run
+# `changeset pre exit` in the same pull request. Both edits are visible; neither works alone.
+
+inputs:
+  working-directory:
+    description: 'Repository root holding package.json and .changeset/. Defaults to the workspace.'
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: The declared channel and the changesets state must agree
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      # No `actions/setup-node` here: every runner this ecosystem uses ships a Node new enough for
+      # a script with no dependencies, and a guard that first installs a toolchain is a guard with
+      # more ways to fail than the thing it guards.
+      run: node "${{ github.action_path }}/../../packages/release-channel/index.mjs"
