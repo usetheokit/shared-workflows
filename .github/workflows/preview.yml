@@ -85,15 +85,19 @@ permissions: {}
 jobs:
   preview:
     name: Publish a preview of every publishable package
-    # NOT on a back-merge. A `main → workspace` or `develop → workspace` pull request carries
-    # content that is already published, so there is nothing to preview — and those pull requests
-    # are opened by `github-actions[bot]`, whose workflow runs GitHub holds for manual approval.
-    # Nobody approves them, so each one expires and lands in the checks list as a failure: a red
-    # mark that means "a preview nobody needed was not produced". A check that is red on every
-    # back-merge is a check people stop reading, which is the whole value of this one.
+    # NOT on a back-merge. A pull request whose head is `main` carries content that is ALREADY
+    # PUBLISHED, so there is nothing to preview — and it is opened by `github-actions[bot]`, whose
+    # workflow runs GitHub holds for manual approval. Nobody approves them, so each one expires and
+    # lands in the checks list as a failure: a red mark meaning "a preview nobody needed was not
+    # produced". A check that is red on every back-merge is a check people stop reading, and being
+    # read is the entire value of this one.
+    #
+    # `develop` is deliberately NOT excluded. A `develop → main` pull request is the RELEASE, and
+    # its content is about to be published rather than already published — the one moment a preview
+    # answers something. Those runs are opened by a person, need no approval, and pass today.
     #
     # `github.head_ref` is empty outside a pull request, so a push still previews.
-    if: github.head_ref != 'main' && github.head_ref != 'develop'
+    if: github.head_ref != 'main'
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:

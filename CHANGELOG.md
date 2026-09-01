@@ -12,8 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that is already published, so there is nothing to preview — and those pull requests are opened by
   `github-actions[bot]`, whose runs GitHub holds for manual approval. Nobody approves them, so each
   expired and landed in the checks list as a failure: a red mark meaning "a preview nobody needed
-  was not produced". A check that is red on every back-merge is a check people stop reading, which
-  is the whole value of this one. Dependabot's pull requests are unaffected — those run and pass.
+  was not produced". A check that is red on every back-merge is a check people stop reading, and
+  being read is the entire value of this one.
+
+  `develop` is deliberately not excluded: a `develop -> main` pull request is the RELEASE, and its
+  content is about to be published rather than already published — the one moment a preview answers
+  something. Dependabot's pull requests are unaffected; measured, they run and pass.
 
 ### Fixed
 
