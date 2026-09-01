@@ -224,6 +224,12 @@ async function commandInstall(root) {
   // transitively, so it needs an answer for siblings the package under test never names.
   const published = {};
   for (const p of workspace) published[p.name] = await publishedVersions(p.name);
+  // What the registry SERVES, as opposed to everything it holds. `peerInstallSpecs` asks whether
+  // that version satisfies a declared range, which is the only way to tell a real prerelease floor
+  // (`>=4.63.4-next.0`, latest does not satisfy) from a prerelease SENTINEL (`>=0.1.0-alpha.0`,
+  // latest satisfies and the sentinel was never published).
+  const latestServed = new Map();
+  for (const p of workspace) latestServed.set(p.name, await latestVersion(p.name));
   for (const pkg of findPublishablePackages(root)) {
     const refs = siblingReferences(pkg.manifest, isSibling);
     // What the registry cannot answer yet, taken from the workspace instead. Only the gap —
@@ -232,7 +238,7 @@ async function commandInstall(root) {
     // Computed AFTER the substitution and from it: a peer this cut is about to publish must not
     // also be asked for as `@latest`, or the registry copy overrides the packed one on the same
     // command line — see `peerInstallSpecs`.
-    const siblings = peerInstallSpecs({ references: refs, localSiblings });
+    const siblings = peerInstallSpecs({ references: refs, localSiblings, latest: latestServed });
     const result = installFromTarball({ packageDir: pkg.dir, repoRoot: root, alsoInstall: siblings, localSiblings });
     for (const s of result.substituted ?? []) substitutions.push({ pkg: pkg.manifest.name, ...s });
     if (!result.installed) {
