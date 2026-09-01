@@ -1,0 +1,179 @@
+name: 'Publish a snapshot'
+description: >-
+  Publishes the current tree under a dist-tag that is never `latest`, so a change becomes
+  installable from the registry before it is merged — including from another repository.
+
+# A COMPOSITE ACTION, and that is the load-bearing choice. These steps run inside the CALLER'S job,
+# so the OIDC token is minted by the caller's workflow file — `release.yml` — and npm's trusted
+# publisher connections, which match per package, per repository and per workflow FILE, keep
+# matching. A reusable workflow would be a job of its own under a different file, and every
+# connection in the organisation would have to be re-created before the first publish worked.
+#
+#   - uses: usetheokit/shared-workflows/actions/snapshot@v1
+#     with:
+#       tag: ${{ inputs.snapshot }}
+#       publish-command: pnpm run release:snapshot   # optional; must honour $SNAPSHOT_TAG
+#
+# ## Why an ecosystem of separate repositories needs this more than a monorepo does
+#
+# A monorepo snapshots so a reviewer can install a pull request. Here the sharper need is
+# cross-repository: `@theokit/http` goes to 2.0.0 in one repository while `theokit-plugins` declares
+# a range in another, and nothing finds out until a release runs `dep-check`. Measured on
+# 2026-08-31: three published packages were uninstallable by any npm user for exactly that reason.
+# A snapshot lets the second repository install the first one's unmerged change and answer the
+# question before either is released.
+#
+# ## What it costs, stated rather than discovered
+#
+# An npm version is immutable and cannot be unpublished after 72 hours. Every snapshot burns one,
+# permanently. That is the price of being the registry rather than a rehearsal of it.
+
+inputs:
+  tag:
+    description: 'The dist-tag to publish under. Never `latest` — the action refuses it.'
+    required: true
+  publish-command:
+    description: >-
+      The command that publishes. Must pass the tag through; `$SNAPSHOT_TAG` is exported for it.
+      Override to reuse a repository's own guard chain, so a guard added to the release path is not
+      silently missing from this one.
+    required: false
+    default: 'pnpm changeset publish --tag "$SNAPSHOT_TAG" --no-git-tag'
+  working-directory:
+    description: 'Repository root. Defaults to the workspace.'
+    required: false
+    default: '.'
+
+runs:
+  using: composite
+  steps:
+    - name: Refuse a tag that would reach everybody
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        # Through the environment, never interpolated into the script body: a `${{ }}` inside a
+        # `run:` is a script-injection sink, and this value comes from whoever dispatched the run.
+        SNAPSHOT_TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        if [ "$SNAPSHOT_TAG" = "latest" ]; then
+          echo "::error title=Snapshot::refusing to publish on 'latest' — the one tag this path exists to stay off"
+          exit 1
+        fi
+        if ! printf '%s' "$SNAPSHOT_TAG" | grep -qE '^[A-Za-z][A-Za-z0-9._-]*$'; then
+          echo "::error title=Snapshot::dist-tag '$SNAPSHOT_TAG' is unusable: start with a letter, then letters, digits, dot, dash or underscore"
+          exit 1
+        fi
+        echo "SNAPSHOT_TAG=$SNAPSHOT_TAG" >> "$GITHUB_ENV"
+
+    - name: There must be something to snapshot, and the tree must describe it
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        # A snapshot version is DERIVED FROM the pending changesets. With none pending,
+        # `changeset version --snapshot` rewrites nothing and the publish would re-publish the
+        # versions already on the registry under a new tag — not what anyone dispatching this asked
+        # for. Absence is a reason to stop, not a reason to guess.
+        pending=$(find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | wc -l)
+        if [ "$pending" -eq 0 ]; then
+          echo "::error title=Snapshot::no pending changesets — a snapshot version is derived from them, so there is nothing to publish"
+          exit 1
+        fi
+        echo "SNAPSHOT_PENDING=$pending" >> "$GITHUB_ENV"
+
+        # Checked BEFORE the version bump, because `changeset version --snapshot` rewrites every
+        # package.json and would make this report dirty by its own doing from there on. A SHA
+        # recorded beside a dirty tree promises a reproducibility it does not have.
+        dirty=$(git status --porcelain)
+        if [ -n "$dirty" ]; then
+          echo "::error title=Snapshot::working tree is not clean, so ${GITHUB_SHA} would not describe what gets published:"
+          printf '%s\n' "$dirty"
+          exit 1
+        fi
+
+        # The ref is part of the measurement, so it is recorded rather than assumed. A dispatch runs
+        # against whatever ref was selected; dispatched from a branch behind the published state it
+        # faithfully packages that older tree, and the version string says nothing about where it
+        # came from. The ref is deliberately NOT restricted to the default branch — snapshotting a
+        # fix before it lands is the entire reason this path exists.
+        echo "ref=${GITHUB_REF} sha=${GITHUB_SHA} pending=${pending}"
+
+    - name: Leave prerelease mode for this run only
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        # `changeset version --snapshot` REFUSES while the repository is in prerelease mode:
+        #
+        #     Snapshot release is not allowed in pre mode
+        #     To resolve this exit the pre mode by running `changeset pre exit`
+        #
+        # Measured 2026-09-01. Every repository in this ecosystem now lives permanently in pre mode
+        # on `next`, so without this step the snapshot path is dead everywhere — and it died
+        # silently, the day pre mode was switched on, in a path nobody runs on a schedule.
+        #
+        # The exit happens in the RUNNER'S COPY and is never committed and never pushed. The repository
+        # stays in prerelease mode; the last step of this action proves the commit did not move.
+        if [ -f .changeset/pre.json ]; then
+          mode=$(node -p "JSON.parse(require('fs').readFileSync('.changeset/pre.json','utf8')).mode")
+          if [ "$mode" = "pre" ]; then
+            echo "in prerelease mode — exiting for this run only, nothing is committed"
+            pnpm changeset pre exit
+          fi
+        fi
+
+    - name: Version and publish under the tag
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        # Through the environment and `eval`, never interpolated into the script body — the
+        # convention `sonar.yml` already sets for `coverage-command`. A `${{ }}` inside a `run:`
+        # is a script-injection sink, and consistency here is worth more than one saved line.
+        PUBLISH_COMMAND: ${{ inputs.publish-command }}
+      run: |
+        set -euo pipefail
+        pnpm changeset version --snapshot "$SNAPSHOT_TAG"
+
+        {
+          echo "### Snapshot published under \`${SNAPSHOT_TAG}\`"
+          echo
+          echo "| what | value |"
+          echo "|---|---|"
+          echo "| ref | \`${GITHUB_REF}\` |"
+          echo "| commit | \`${GITHUB_SHA}\` |"
+          echo "| tree at that commit | clean, verified before the version bump |"
+          echo "| changesets consumed | ${SNAPSHOT_PENDING} |"
+          echo
+          echo "| package | version |"
+          echo "|---|---|"
+          for m in packages/*/package.json; do
+            [ -f "$m" ] || continue
+            node -e 'const j = require(process.argv[1]); if (!j.private) console.log("| " + j.name + " | " + j.version + " |");' "$PWD/$m"
+          done
+          echo
+          echo "Install with \`npm i <package>@${SNAPSHOT_TAG}\`, or pin the exact version above."
+          echo "Not on \`latest\`, and never garbage-collected — an npm version is immutable."
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        eval "${PUBLISH_COMMAND}"
+
+    - name: Prove nothing was committed
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        # This action deliberately mutates the tree — it exits prerelease mode and rewrites every
+        # manifest. None of that may reach a ref. A future edit that adds a commit or a push here
+        # would take the repository out of prerelease mode for real, and the next ordinary release
+        # would publish a stable version and move `latest`. That is precisely the failure the
+        # release-channel guard exists to catch, so this step refuses to let this action cause it.
+        head=$(git rev-parse HEAD)
+        if [ "$head" != "${GITHUB_SHA}" ]; then
+          echo "::error title=Snapshot::HEAD moved from ${GITHUB_SHA} to ${head} — a snapshot must leave no commit behind"
+          exit 1
+        fi
+        echo "HEAD is still ${GITHUB_SHA} — nothing was committed"
