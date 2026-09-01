@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`dep-check` 0.9.4:** check D now decides by SATISFACTION rather than by appearance. It asks for
+  `@latest` when the served version satisfies the declared range, and for the range's floor only
+  when it does not. 0.9.3 keyed on "the floor looks like a prerelease" and got the second shape
+  backwards: `>=0.1.0-alpha.0` is the idiom for "0.1.0 or above, prereleases included", the suffix
+  is a **sentinel** that was never published, and asking for it installed `undefined`
+  (usetheokit/theokit#626). The first shape stays fixed: `>=4.63.4-next.0` against a `latest` of
+  4.63.3 still pairs with the floor (usetheokit/theokit-sdk#510). One rule now covers both, and it
+  is the question the check actually asks.
+
 - **`preview.yml`:** no preview on a back-merge. A `main → workspace` pull request carries content
   that is already published, so there is nothing to preview — and those pull requests are opened by
   `github-actions[bot]`, whose runs GitHub holds for manual approval. Nobody approves them, so each

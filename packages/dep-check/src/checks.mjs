@@ -197,7 +197,7 @@ export function groupUntestedFloors(untested) {
  * registry can serve keeps its `@latest`, because the point of the leg is to install what a
  * consumer would get.
  */
-export function peerInstallSpecs({ references, localSiblings = [] }) {
+export function peerInstallSpecs({ references, localSiblings = [], latest = new Map() }) {
   const packed = new Set(localSiblings.map((s) => s.name));
   const specs = new Set();
   for (const r of references) {
@@ -205,26 +205,35 @@ export function peerInstallSpecs({ references, localSiblings = [] }) {
     if (LOCAL_PROTOCOL.test(r.range ?? "")) continue;
     if (packed.has(r.dep)) continue;
 
-    // `@latest` is the right ask for a stable line and the WRONG one for a prerelease line. A
-    // package published on a prerelease channel declares the peer it was built against — after
-    // `changeset version` in pre mode, `@theokit/sdk-tools@0.27.4-next.0` asks for
-    // `@theokit/sdk@">=4.63.4-next.0"` — and `latest` is 4.63.3, so npm answers ERESOLVE and the
-    // gate reports a package nobody can install. The package IS installable; it was paired with
-    // the wrong sibling.
+    // Ask for `@latest` when `latest` SATISFIES the declared range, and for the range's floor only
+    // when it does not. That is the question this check asks — can a consumer install this package
+    // beside the sibling the registry serves — so it is the one worth answering directly.
     //
-    // No range string can admit future prereleases (semver by design), so the rewrite is not
-    // avoidable and this is where it has to be understood. Measured 2026-09-01 on
-    // usetheokit/theokit-sdk#510.
+    // Two shapes make the naive answers wrong, and each broke a release here:
     //
-    // The floor is only used when it names a prerelease. On a stable line `@latest` stays the ask,
-    // because the question there is whether a consumer taking the current release can install this.
-    let floor = null;
-    try {
-      floor = semver.minVersion(r.range ?? "");
-    } catch {
-      floor = null;
+    //   `>=4.63.4-next.0` with latest 4.63.3   — after `changeset version` in prerelease mode a
+    //     package declares the peer it was built against, and `latest` does not satisfy it. Asking
+    //     for `@latest` makes npm answer ERESOLVE and the gate report a package nobody can install,
+    //     when it is installable and was paired with the wrong sibling. (theokit-sdk#510)
+    //
+    //   `>=0.1.0-alpha.0` with latest 2.0.0    — the `-alpha.0` is the idiom for "any version at or
+    //     above 0.1.0, prereleases included". It is a SENTINEL, not a release: 0.1.0-alpha.0 was
+    //     never published. Asking for it installs `undefined`. Latest satisfies this range, so
+    //     `@latest` is right — and a rule keyed on "the floor looks like a prerelease" gets it
+    //     backwards. (theokit#626)
+    //
+    // Satisfaction distinguishes them without needing to know which shape it is looking at.
+    const known = latest.get(r.dep);
+    let spec = `${r.dep}@latest`;
+    if (r.range && known && !semver.satisfies(known, r.range)) {
+      try {
+        const floor = semver.minVersion(r.range);
+        if (floor) spec = `${r.dep}@${floor.version}`;
+      } catch {
+        // An unparseable range is not a reason to invent a version. `@latest` at least exists.
+      }
     }
-    specs.add(floor && semver.prerelease(floor) ? `${r.dep}@${floor.version}` : `${r.dep}@latest`);
+    specs.add(spec);
   }
   return [...specs];
 }
