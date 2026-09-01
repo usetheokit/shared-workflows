@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`preview.yml`:** no preview on a back-merge. A `main → workspace` pull request carries content
+  that is already published, so there is nothing to preview — and those pull requests are opened by
+  `github-actions[bot]`, whose runs GitHub holds for manual approval. Nobody approves them, so each
+  expired and landed in the checks list as a failure: a red mark meaning "a preview nobody needed
+  was not produced". A check that is red on every back-merge is a check people stop reading, which
+  is the whole value of this one. Dependabot's pull requests are unaffected — those run and pass.
+
 ### Fixed
 
 - **`dep-check`:** check D asks for the version a prerelease peer range NAMES, instead of `@latest`.
