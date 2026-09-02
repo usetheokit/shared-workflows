@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`preview.yml` scopes the preview to the packages a commit touched, instead of publishing one
+  package per invocation (#632).** The previous entry described a loop; the loop was wrong, and it
+  shipped for a few hours.
+
+  The defect is unchanged: pkg.pr.new rewrites internal dependencies to preview URLs across every
+  package in ONE invocation, so publishing the whole workspace made each preview declare its
+  siblings as URLs — an exotic SUBdependency, which a default pnpm 11 refuses outright.
+
+  **Why the loop was the wrong fix.** It removed the cross-URL everywhere, including where it is
+  REQUIRED: a change spanning two packages needs the URL between them, and an invocation per package
+  cannot produce it. I had measured that a default pnpm 11 consumer cannot install a cross-package
+  preview at all — four setups, all refused, including the parent taken from the registry with a
+  clean range and only the sibling overridden — and read that as "the property costs nothing". It
+  does not follow: that measurement says the cross-URL does not help the DEFAULT consumer, not that
+  it helps nobody, and anyone who took the documented workaround (`blockExoticSubdeps: false`) still
+  depends on it. `usetheokit/theokit#637` had already put the scope in the right place for one
+  repository, and this brings the same shape to the default every other repository gets.
+
+  A change inside one package publishes one, and its siblings stay on registry ranges; a change
+  spanning two publishes both, and the URL between THEM survives.
+
+  **Fails wide, deliberately.** No base ref, no history, a shallow clone that cannot reach it, an
+  empty diff, a `git diff` that errors — every one of those falls back to publishing everything,
+  which is what this workflow did before. Failing narrow would silently stop previewing the package
+  somebody was about to verify, and an absent preview looks identical to a broken one. Verified on
+  a real repository: no base → 7 packages; base touching three → "scoped to 3 of 7"; base that does
+  not exist → 7 packages, with the reason on stderr and git's own `fatal:` suppressed so the step
+  does not read as broken.
+
+  Repositories passing their own `packages-command` are unaffected — this only changes the default.
+
 - **`preview.yml` publishes one package per invocation, so its previews install (#44).** pkg.pr.new
   rewrites internal dependencies to preview URLs across every package in one invocation, so each
   preview declared its siblings as URLs — and from the consumer's side those are SUBdependencies,
