@@ -203,19 +203,71 @@ jobs:
         env:
           PKG_PR_NEW_VERSION: ${{ inputs.pkg-pr-new-version }}
           PUBLISH_COMMAND: ${{ inputs.publish-command }}
+        # ONE INVOCATION PER PACKAGE, and the step name has said so since before it was true.
+        #
+        # pkg.pr.new rewrites internal dependencies to preview URLs across every package in ONE
+        # invocation. Publishing the whole workspace together therefore made each preview declare
+        # its siblings as URLs — and from the consumer's side those are SUBdependencies, which
+        # pnpm 11 refuses out of the box (`blockExoticSubdeps: true`):
+        #
+        #   [ERR_PNPM_EXOTIC_SUBDEP] Exotic dependency "@theokit/presenter" (resolved via url)
+        #   is not allowed in subdependencies when blockExoticSubdeps is enabled
+        #
+        # Nothing in the consumer's manifest is exotic; the exotic package arrives one level down,
+        # from the preview itself. So every preview this workflow produced for a monorepo with
+        # internal dependencies was uninstallable by a default pnpm 11 workspace — which is exactly
+        # the consumer previews exist for. `usetheokit/theokit#632`, `usetheokit/shared-workflows#44`.
+        #
+        # ## Why this is a fix and not a trade
+        #
+        # It reads like one: publishing separately means a preview cannot carry a cross-package
+        # change as a pair. Measured on 2026-09-02 against pnpm 11.25.0, that pairing is ALREADY
+        # impossible for a default consumer, so nothing is being given up. Four attempts, all
+        # refused with the same error:
+        #
+        #   A  sibling declared as a direct dependency at a preview URL, in a workspace
+        #   B  sibling pinned through `overrides` in `pnpm-workspace.yaml`
+        #   C  sibling as a direct dependency, no workspace file at all
+        #   D  parent from the REGISTRY (clean `0.8.0` range), sibling overridden to a preview URL
+        #
+        # D is the decisive one: even with a manifest this workflow never touched, a consumer
+        # cannot point a subdependency at a preview URL. pnpm blocks the EDGE, not the package —
+        # which also contradicts its own documentation ("only direct dependencies … may use exotic
+        # sources"): a package that is both direct and transitive is refused for the transitive
+        # edge. And pnpm 11 offers no allowlist, so the only consumer-side escape is turning
+        # `blockExoticSubdeps` off for the whole workspace, which stops vetting every other
+        # dependency too.
+        #
+        # ## What this costs, stated rather than discovered
+        #
+        # N invocations instead of one, so a repository with nine publishable packages makes nine
+        # calls. Slower, and visibly so in the log.
+        #
+        # ## The one assumption, and how it gets checked
+        #
+        # That pkg.pr.new's rewrite is scoped to the packages in the current invocation, so a
+        # single-package call leaves `"@theokit/presenter": "0.8.0"` alone. `pnpm --filter … pack`
+        # already writes that range, so the manifest was never the source of the URL. If the
+        # rewrite turns out to be broader, the first preview after this change still fails with
+        # ERR_PNPM_EXOTIC_SUBDEP and nothing is worse than before.
         run: |
           set -euo pipefail
           mapfile -t dirs < /tmp/publishable.txt
-          if [ -n "$PUBLISH_COMMAND" ]; then
-            # Through the environment and `eval`, the convention `sonar.yml` sets for
-            # `coverage-command`. `$DIRS` is what the caller's command interpolates.
-            DIRS="${dirs[*]}" eval "${PUBLISH_COMMAND}"
-          else
-            # Pinned rather than floating, so a preview cannot silently change tool version
-            # between commits.
-            if [ -f pnpm-lock.yaml ]; then
-              pnpm dlx "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}"
+          for dir in "${dirs[@]}"; do
+            echo "::group::preview ${dir}"
+            if [ -n "$PUBLISH_COMMAND" ]; then
+              # Through the environment and `eval`, the convention `sonar.yml` sets for
+              # `coverage-command`. `$DIRS` is what the caller's command interpolates — one
+              # directory per call now, so a caller that loops over it still behaves.
+              DIRS="${dir}" eval "${PUBLISH_COMMAND}"
             else
-              npx --yes "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}"
+              # Pinned rather than floating, so a preview cannot silently change tool version
+              # between commits.
+              if [ -f pnpm-lock.yaml ]; then
+                pnpm dlx "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dir}"
+              else
+                npx --yes "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dir}"
+              fi
             fi
-          fi
+            echo "::endgroup::"
+          done

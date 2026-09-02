@@ -8,6 +8,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`preview.yml` publishes one package per invocation, so its previews install (#44).** pkg.pr.new
+  rewrites internal dependencies to preview URLs across every package in one invocation, so each
+  preview declared its siblings as URLs — and from the consumer's side those are SUBdependencies,
+  which pnpm 11 refuses out of the box:
+
+  ```
+  [ERR_PNPM_EXOTIC_SUBDEP] Exotic dependency "@theokit/presenter" (resolved via url)
+  is not allowed in subdependencies when blockExoticSubdeps is enabled
+  ```
+
+  Nothing in the consumer's manifest is exotic; the exotic package arrives one level down, from the
+  preview itself. So every preview this workflow produced for a monorepo with internal dependencies
+  was uninstallable by a default pnpm 11 workspace — the exact consumer previews exist for.
+
+  **Not a trade, though it reads like one.** Publishing separately means a preview cannot carry a
+  cross-package change as a pair, and that pairing is ALREADY impossible for a default consumer.
+  Measured against pnpm 11.25.0 on 2026-09-02, four attempts, all refused identically: the sibling
+  as a direct dependency at a preview URL (with and without a workspace file), the sibling pinned
+  through `overrides`, and — decisively — the parent taken from the REGISTRY with a clean `0.8.0`
+  range and only the sibling overridden. pnpm blocks the EDGE, not the package, which also
+  contradicts its documentation ("only direct dependencies … may use exotic sources"): a package
+  that is both direct and transitive is refused for the transitive edge. There is no allowlist, so
+  the only consumer-side escape remains `blockExoticSubdeps: false` for the whole workspace.
+
+  Costs N invocations instead of one. The single assumption — that the rewrite is scoped to the
+  packages in one invocation — checks itself: if it is broader, the next preview fails exactly as
+  it does today and nothing is worse.
+
+- **`dep-check floor-matrix` reports NOT CHECKED instead of deadlocking on a Version PR (#27).**
+  The per-package floor legs pin one sibling under the manager's override field and then reinstall
+  from the registry. On a Version Packages pull request the workspace already carries the versions
+  that pull request exists to publish, so the re-resolution asks npm for a version that does not
+  exist there yet — measured on `usetheokit/theokit#533`: `ERR_PNPM_NO_MATCHING_VERSION … No
+  matching version found for theokit@0.57.1`, while the registry's newest was `0.57.0`. Two jobs red
+  for a floor problem nobody had.
+
+  Same structural deadlock `#17` fixed for check D, one step over: that fix substitutes packed
+  workspace tarballs and lives in the tarball path, which these legs never take.
+
+  The answer is to skip rather than to substitute. The leg's purpose is a claim about a sibling
+  RANGE, and an unpublished sibling is not the thing under test — a local tarball would answer a
+  question nobody asked while looking like the answer to the one that was. What must not happen is
+  the leg going green: a floor that genuinely does not work and a resolution failure are
+  indistinguishable from outside the job. So the plan emits an empty matrix and the run summary
+  carries `NOT CHECKED (unpublished sibling in tree)`, naming every blocking package — the
+  `untestedFloors` precedent, which exists for the same reason.
+
+  Deliberately conservative: any unpublished workspace version blocks every leg, not only the legs
+  that would demand it. Modelling which manifests a given override forces the manager to re-resolve
+  is a claim about pnpm's resolver internals, and a wrong model fails toward a green leg that
+  installed nothing. Over-skipping is loud; a false green is not.
+
 - **New `actions/manifest-check`:** the published-manifest contract, checked instead of remembered.
   Audited across 50 publishable packages on 2026-09-01, and every rule is a defect that was found
   rather than a style someone preferred: 38 did not export `./package.json`, 30 had no `keywords`,
