@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`preview.yml` checks out full history, so the scoping it added actually runs (#632).** The
+  previous entry described a scope by diff; measured on `usetheokit/theokit#637`, that scope
+  **never fired**. `actions/checkout` defaults to depth 1, `git diff <base>...HEAD` needs a
+  merge-base, and the step reported *"could not read a diff (shallow clone)"* and fell back to
+  publishing all seven packages — which reintroduces the cross-URL the scoping exists to avoid.
+  A `git fetch --depth=50` inside the step is not enough: it deepens one ref without giving the two
+  histories a common ancestor.
+
+  A fallback that always fires is worse than no mechanism: it reads as one and behaves as none.
+
+  The enumeration also stopped conflating two facts. A diff that could not be READ and a diff that
+  is EMPTY both publish everything, and reporting them identically is how a scope that never runs
+  looks like a scope that ran and matched nothing. Three distinct messages, verified against a real
+  repository: `could not read a diff against <base>`, `no package directory in the diff`, and
+  `scoped to 3 of 7 package(s) this commit touched`.
+
+  Cost: a full clone per preview run.
+
+
 - **`preview.yml` scopes the preview to the packages a commit touched, instead of publishing one
   package per invocation (#632).** The previous entry described a loop; the loop was wrong, and it
   shipped for a few hours.

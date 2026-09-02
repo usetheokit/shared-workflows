@@ -104,6 +104,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history, because the enumeration below scopes the preview to the packages the
+          # commit touched and `git diff <base>...HEAD` needs a merge-base to exist. The default
+          # depth is 1, and measured on `usetheokit/theokit#637` that is exactly what happened: the
+          # step reported "could not read a diff (shallow clone)" and fell back to publishing all
+          # seven — which reintroduces the cross-URL this scoping exists to avoid. A `git fetch
+          # --depth=50` inside the step is not enough either; it deepens one ref without giving the
+          # two histories a common ancestor.
+          #
+          # The cost is a full clone per preview run. That is the price of the scope being real
+          # rather than a fallback that always fires, which is worse than not having it: it reads
+          # as a mechanism and behaves as none.
+          fetch-depth: 0
       # Which manager, decided by the lockfile on disk rather than assumed. Nine repositories
       # here use pnpm and one uses npm, and a workflow that assumed pnpm simply left that one
       # without previews — which is how a shared mechanism quietly becomes an eight-of-nine
@@ -206,15 +218,24 @@ jobs:
           const base = process.env.PREVIEW_DIFF_BASE
           if (base) {
             let changed = ''
+            let readable = true
             try {
-              // stderr ignored: the failure is already handled below, and git's `fatal:` line in
-              // the log reads as a broken step to whoever opens it.
+              // stderr ignored: the failure is handled below, and git's `fatal:` line in the log
+              // reads as a broken step to whoever opens it.
               changed = execSync(`git diff --name-only ${base}...HEAD`, {
                 encoding: 'utf8',
                 stdio: ['ignore', 'pipe', 'ignore'],
               })
             } catch {
-              changed = ''
+              // A diff that could not be READ and a diff that is EMPTY both publish everything, and
+              // they are different facts. Reporting them the same way is how a scope that never
+              // runs looks identical to a scope that ran and matched nothing.
+              readable = false
+            }
+            if (!readable) {
+              console.error(`could not read a diff against ${base} — publishing every package`)
+              for (const dir of dirs) console.log(dir)
+              process.exit(0)
             }
             const touched = dirs.filter((dir) => {
               const prefix = `${dir.replace(/^\.\//, '')}/`
