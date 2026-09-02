@@ -21,7 +21,7 @@
  * none of the other three mean anything either.
  */
 import { parseArgs } from "node:util";
-import { ceilingDrift, consumersLeftBehind, groupUntestedFloors, installedDrift, isSibling, peerInstallSpecs, pinnableSiblings, rangeFloor, sharedFloor, unpublishedSiblings, untestedFloors } from "./src/checks.mjs";
+import { ceilingDrift, consumersLeftBehind, groupUntestedFloors, installedDrift, isSibling, peerInstallSpecs, pinnableSiblings, rangeFloor, sharedFloor, unpublishedSiblings, unpublishedWorkspaceVersions, untestedFloors } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
 import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
 import { detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
@@ -445,6 +445,29 @@ const MAX_FLOOR_RUNS = 20;
 async function commandFloorMatrix(root) {
   await lowestFloors(root);
   const runs = groupUntestedFloors(lowestFloors.lastUntested ?? []);
+
+  // #27 — the leg reinstalls from the registry, so a workspace version the registry does not have
+  // yet turns every run into ERR_PNPM_NO_MATCHING_VERSION. An empty matrix is the honest answer;
+  // a red job here would report a floor problem that nobody has, and a green one would report a
+  // check that never ran.
+  const workspace = findPublishablePackages(root).map((p) => ({
+    name: p.manifest.name,
+    version: p.manifest.version,
+  }));
+  const published = {};
+  for (const pkg of workspace) published[pkg.name] = await publishedVersions(pkg.name);
+  const blocked = unpublishedWorkspaceVersions({ workspace, published });
+  if (blocked.length && runs.length) {
+    const names = blocked.map((b) => `${b.name}@${b.version}`).join(", ");
+    console.error(
+      `::notice::${runs.length} floor leg(s) NOT CHECKED (unpublished sibling in tree): ${names}. ` +
+        "The reinstall resolves from the registry, which does not have these yet — this is the " +
+        "Version PR case, not a floor problem. They run again on the next ordinary pull request.",
+    );
+    console.log("[]");
+    return 0;
+  }
+
   const capped = runs.slice(0, MAX_FLOOR_RUNS);
   if (runs.length > capped.length) {
     // Never a silent cap: a truncated matrix reads as "everything was covered" when it was not.

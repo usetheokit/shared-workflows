@@ -7,6 +7,7 @@ import {
   isSibling,
   rangeFloor,
   groupUntestedFloors,
+  unpublishedWorkspaceVersions,
   pinnableSiblings,
   sharedFloor,
   peerInstallSpecs,
@@ -548,5 +549,63 @@ describe("peerInstallSpecs — what check D may ask the registry for alongside t
       { dep: "@theokit/sdk", field: "peerDependencies", range: ">=4.1.0" },
     ];
     expect(peerInstallSpecs({ references: refs, localSiblings: [] })).toEqual(["@theokit/sdk@latest"]);
+  });
+});
+
+describe("unpublishedWorkspaceVersions — the reason a floor leg cannot ask the registry", () => {
+  // usetheokit/shared-workflows#27. The floor legs pin one sibling under `pnpm.overrides` and then
+  // run a plain install against the registry. On a Version Packages PR the workspace already
+  // carries the versions that pull request exists to publish, so the re-resolution asks npm for
+  // `theokit@0.57.1` while the registry's newest is 0.57.0 — `ERR_PNPM_NO_MATCHING_VERSION`.
+  //
+  // Same structural deadlock #17 fixed for check D, on a different step: check D's fix lives in
+  // the tarball path, and these legs never take it.
+  //
+  // The leg must not go green on this. What it exists to catch is a floor that genuinely does not
+  // work, and from the outside a resolution failure is indistinguishable from one — so the run is
+  // reported NOT CHECKED, with the reason named.
+  it("test_names_a_workspace_package_whose_local_version_the_registry_does_not_have", () => {
+    const blocked = unpublishedWorkspaceVersions({
+      workspace: [{ name: "theokit", version: "0.57.1" }],
+      published: { theokit: ["0.57.0", "0.56.0"] },
+    });
+    expect(blocked).toEqual([{ name: "theokit", version: "0.57.1" }]);
+  });
+
+  it("test_says_nothing_when_every_workspace_version_is_already_on_the_registry", () => {
+    // The ordinary pull request. Nothing is skipped, and the legs run exactly as before — a gate
+    // that fires on the normal case is a gate somebody disables.
+    expect(
+      unpublishedWorkspaceVersions({
+        workspace: [{ name: "theokit", version: "0.57.0" }],
+        published: { theokit: ["0.57.0"] },
+      }),
+    ).toEqual([]);
+  });
+
+  it("test_treats_a_package_the_registry_cannot_answer_for_as_unknown_rather_than_unpublished", () => {
+    // Missing is not empty, the same distinction `unpublishedSiblings` makes one function up. An
+    // unreachable registry reporting "nothing is published" would skip every leg in every repo
+    // and call the silence a result.
+    expect(
+      unpublishedWorkspaceVersions({
+        workspace: [{ name: "theokit", version: "0.57.1" }],
+        published: {},
+      }),
+    ).toEqual([]);
+  });
+
+  it("test_reports_every_blocker_rather_than_the_first_one", () => {
+    // A version cut bumps several packages at once, and naming one of them sends the reader to
+    // fix a single manifest and meet the same failure again.
+    const blocked = unpublishedWorkspaceVersions({
+      workspace: [
+        { name: "theokit", version: "0.57.1" },
+        { name: "@theokit/http", version: "0.5.0" },
+        { name: "@theokit/agents", version: "12.0.0" },
+      ],
+      published: { theokit: ["0.57.0"], "@theokit/http": ["0.4.0"], "@theokit/agents": ["12.0.0"] },
+    });
+    expect(blocked.map((b) => b.name)).toEqual(["@theokit/http", "theokit"]);
   });
 });

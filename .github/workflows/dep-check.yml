@@ -345,11 +345,39 @@ jobs:
         # reaches everything.
         run: |
           set -euo pipefail
-          matrix="$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" floor-matrix --root repo)"
+          # stderr to a file and back to the log: the next step reads the reason from it, and a
+          # process substitution would leave the flush racing the step boundary.
+          matrix="$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" floor-matrix --root repo 2>plan-stderr.log)"
+          cat plan-stderr.log >&2
           count="$(printf '%s' "$matrix" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).length))")"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "count=$count" >> "$GITHUB_OUTPUT"
           echo "$count extra run(s) needed"
+
+      - name: What this run actually checked
+        # #27 — an empty matrix has two causes that look identical from outside: nothing to check,
+        # and could not check. The second one is the Version PR case, where the reinstall would ask
+        # the registry for a version this pull request exists to publish. Both skip the legs; only
+        # one of them means the floors are fine.
+        if: always()
+        run: |
+          set -euo pipefail
+          notice="$(grep -o 'NOT CHECKED (unpublished sibling in tree).*' plan-stderr.log || true)"
+          {
+            echo "### Per-package floors — what ran"
+            echo ""
+            if [ -n "$notice" ]; then
+              echo "| check | outcome |"
+              echo "| --- | --- |"
+              echo "| per-package floor legs | NOT CHECKED (unpublished sibling in tree) |"
+              echo ""
+              echo "> $notice"
+              echo ">"
+              echo "> A green run here means the legs did not execute, not that the floors install."
+            else
+              echo "${{ steps.plan.outputs.count }} extra run(s) planned."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   floor-per-package:
     name: ${{ matrix.run.dep }}@${{ matrix.run.version }}, the floor only some packages claim

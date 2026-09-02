@@ -129,6 +129,51 @@ export function pinnableSiblings(references, workspaceMembers) {
 }
 
 /**
+ * Workspace packages whose local version the registry does not have yet.
+ *
+ * The floor legs pin one sibling under the manager's override field and then run a plain install
+ * against the registry. That re-resolution asks npm for workspace versions — and on a Version
+ * Packages pull request the tree already carries the versions that pull request exists to publish.
+ * Measured on usetheokit/theokit#533: `ERR_PNPM_NO_MATCHING_VERSION … No matching version found for
+ * theokit@0.57.1`, while the registry's newest was 0.57.0.
+ *
+ * The same structural deadlock #17 fixed for check D, one step over. That fix substitutes packed
+ * workspace tarballs, and it lives in the tarball path; these legs run `install` and never reach it.
+ *
+ * ## Why the answer is to skip rather than to substitute
+ *
+ * The leg's purpose is a claim about a SIBLING RANGE — "the floor this package declares actually
+ * installs". An unpublished sibling is not the thing under test, and substituting a local tarball
+ * for it would answer a question nobody asked while looking like the answer to the one that was.
+ *
+ * What must not happen is the leg going green. A floor that genuinely does not work and a
+ * resolution failure are indistinguishable from outside the job, so the run is reported NOT CHECKED
+ * with the reason named — the `untestedFloors` precedent, which exists for the same reason.
+ *
+ * ## Deliberately conservative
+ *
+ * Any unpublished workspace version blocks every leg, not only the legs that would demand it.
+ * Modelling which manifests a given override forces the manager to re-resolve is a claim about
+ * pnpm's resolver internals that nobody here can make at 95% confidence, and a wrong model fails in
+ * the direction of a green leg that installed nothing. Over-skipping is loud and visible; a false
+ * green is neither.
+ *
+ * Missing is not empty, as in `unpublishedSiblings`: a registry that cannot answer for a package
+ * reports nothing rather than "unpublished", or one unreachable request would skip every leg in
+ * every repository and call the silence a result.
+ */
+export function unpublishedWorkspaceVersions({ workspace, published }) {
+  const out = [];
+  for (const pkg of workspace ?? []) {
+    const versions = published?.[pkg.name];
+    if (!Array.isArray(versions) || !versions.length) continue;
+    if (versions.includes(pkg.version)) continue;
+    out.push({ name: pkg.name, version: pkg.version });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
  * The extra runs needed to exercise the floors the intersection cannot reach.
  *
  * `untestedFloors` names them; this turns that list into work. One entry per distinct
