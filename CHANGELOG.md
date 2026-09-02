@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`preview.yml` publishes one package per invocation, so its previews install (#44).** pkg.pr.new
+  rewrites internal dependencies to preview URLs across every package in one invocation, so each
+  preview declared its siblings as URLs — and from the consumer's side those are SUBdependencies,
+  which pnpm 11 refuses out of the box:
+
+  ```
+  [ERR_PNPM_EXOTIC_SUBDEP] Exotic dependency "@theokit/presenter" (resolved via url)
+  is not allowed in subdependencies when blockExoticSubdeps is enabled
+  ```
+
+  Nothing in the consumer's manifest is exotic; the exotic package arrives one level down, from the
+  preview itself. So every preview this workflow produced for a monorepo with internal dependencies
+  was uninstallable by a default pnpm 11 workspace — the exact consumer previews exist for.
+
+  **Not a trade, though it reads like one.** Publishing separately means a preview cannot carry a
+  cross-package change as a pair, and that pairing is ALREADY impossible for a default consumer.
+  Measured against pnpm 11.25.0 on 2026-09-02, four attempts, all refused identically: the sibling
+  as a direct dependency at a preview URL (with and without a workspace file), the sibling pinned
+  through `overrides`, and — decisively — the parent taken from the REGISTRY with a clean `0.8.0`
+  range and only the sibling overridden. pnpm blocks the EDGE, not the package, which also
+  contradicts its documentation ("only direct dependencies … may use exotic sources"): a package
+  that is both direct and transitive is refused for the transitive edge. There is no allowlist, so
+  the only consumer-side escape remains `blockExoticSubdeps: false` for the whole workspace.
+
+  Costs N invocations instead of one. The single assumption — that the rewrite is scoped to the
+  packages in one invocation — checks itself: if it is broader, the next preview fails exactly as
+  it does today and nothing is worse.
+
 - **`dep-check floor-matrix` reports NOT CHECKED instead of deadlocking on a Version PR (#27).**
   The per-package floor legs pin one sibling under the manager's override field and then reinstall
   from the registry. On a Version Packages pull request the workspace already carries the versions
