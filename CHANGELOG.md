@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **A preview that falls back to publishing everything now says it is not installable (#48).** The
+  scoping added in `#46`/`#47` leaves one case open: a commit that touches no package directory —
+  a CI change, a docs change, a root config change. There the enumeration publishes the whole set in
+  one invocation and the cross-package URL rewrite comes back with it, so a default pnpm 11 refuses
+  the result with `ERR_PNPM_EXOTIC_SUBDEP`.
+
+  That fallback stays, and the reason is worth stating because the obvious alternative is wrong:
+  `packages/*/tsconfig.json` extends the repository root, so a root-level change alters what every
+  package BUILDS while touching no package directory. **"No package in the diff" does not mean "no
+  package changed"**, and publishing nothing there would hide a real difference behind a 404.
+
+  What changes is that the log now carries the consequence and the remedy, instead of leaving both
+  to be discovered. An uninstallable preview that announces itself costs a minute; one that does not
+  cost an afternoon — measured, since that is exactly how this was found while routing a consumer
+  onto develop versions.
+
+
 - **`preview.yml` checks out full history, so the scoping it added actually runs (#632).** The
   previous entry described a scope by diff; measured on `usetheokit/theokit#637`, that scope
   **never fired**. `actions/checkout` defaults to depth 1, `git diff <base>...HEAD` needs a

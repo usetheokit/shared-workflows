@@ -246,10 +246,26 @@ jobs:
               for (const dir of touched) console.log(dir)
               process.exit(0)
             }
+            // Publishing everything brings the cross-package URL rewrite back with it, so this
+            // preview is NOT installable under a default pnpm 11 — `blockExoticSubdeps` refuses a
+            // sibling that arrives as a URL one level down. Said out loud, with the remedy, because
+            // an uninstallable preview that announces itself costs a minute and one that does not
+            // costs an afternoon (usetheokit/shared-workflows#48).
+            //
+            // Publishing NOTHING was the tempting alternative and it is wrong: `packages/*/
+            // tsconfig.json` extends the repository root, so a root-level change alters what every
+            // package BUILDS while touching no package directory. "No package in the diff" does not
+            // mean "no package changed", and skipping there would hide a real difference.
             console.error(
               touched.length === 0
                 ? 'no package directory in the diff — publishing every package'
                 : 'every package is in the diff — publishing every package',
+            )
+            console.error(
+              '::warning::this preview carries cross-package URLs, so a default pnpm 11 refuses it ' +
+                '(ERR_PNPM_EXOTIC_SUBDEP). To install it, set `blockExoticSubdeps: false` in the ' +
+                'consuming workspace — which stops vetting exotic subdependencies for that whole ' +
+                'tree. A preview of a commit that touches one package does not need this.',
             )
           }
 
