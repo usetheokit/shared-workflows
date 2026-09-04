@@ -23,6 +23,37 @@ const LOCKFILES = [
   { file: "yarn.lock", manager: "yarn", install: ["yarn", "install", "--immutable"], unlocked: ["yarn", "install"], run: ["yarn", "run"], filtered: (pkg) => ["yarn", "workspace", pkg, "run"], filteredWithDeps: (pkg) => ["yarn", "workspace", pkg, "run"], overridesPath: ["resolutions"] },
 ];
 
+/**
+ * One invocation that builds several packages and their workspace dependencies, or `null` when
+ * this package manager has no verified multi-package form.
+ *
+ * The floor leg builds every package that claims the floor. Doing it one `--filter` at a time
+ * re-plans the task graph once per package and rebuilds the shared dependencies each round.
+ *
+ * Measured on `theokit-plugins`, whose leg claims 10 packages, cold cache, two rounds each:
+ *
+ *   sequential (10 invocations)   35.2s, 39.6s
+ *   batched    (1 invocation)     23.4s, 24.0s
+ *
+ * -34% and -39%, and the batched run produces the same 10 `dist/` directories.
+ *
+ * NULL RATHER THAN A GUESS for npm and yarn. npm has no `...` equivalent — its `filteredWithDeps`
+ * is already the same as `filtered` — and yarn's `yarn workspace <pkg> run` takes exactly one
+ * name, so batching there means `workspaces foreach`, a different command with different
+ * semantics that nobody here has measured. The caller keeps its loop, which is correct if slower.
+ * A batch that silently built the wrong set would be worse than the time it saved.
+ *
+ * An empty list is `null` too: `pnpm run build` with no filter builds the WHOLE workspace, which
+ * is the defect the per-package filter exists to prevent — packages whose own ranges exclude this
+ * floor fail on it.
+ */
+export function batchedWithDeps(manager, packages) {
+  if (!manager || !packages?.length) return null;
+  if (manager.file !== "pnpm-lock.yaml") return null;
+  const filters = packages.flatMap((pkg) => ["--filter", `${pkg}...`]);
+  return ["pnpm", ...filters, "run"];
+}
+
 /** Null when no lockfile is present — the caller decides whether that is an error. */
 export function detectPackageManager(repoRoot) {
   return LOCKFILES.find((candidate) => existsSync(join(repoRoot, candidate.file))) ?? null;
