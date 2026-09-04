@@ -184,6 +184,37 @@ export function unpublishedWorkspaceVersions({ workspace, published }) {
  * Sorted, because an unstable matrix makes one failing job impossible to compare against the same
  * job yesterday.
  */
+/**
+ * The floors from `untestedFloors` that this repository's floor leg can actually exercise.
+ *
+ * The leg pins the dep under the package manager's override field and reinstalls. When the dep is
+ * a package of THIS workspace, that override rewrites its spec into a plain semver range — which
+ * destroys the `workspace:` protocol guarantee, since pnpm "will refuse to resolve to anything
+ * other than a local workspace package" only while that protocol is in the spec. With
+ * `linkWorkspacePackages` defaulting to false, the range then resolves from the registry and the
+ * published tarball is installed BESIDE the workspace copy.
+ *
+ * Measured on usetheokit/theokit-sdk#569, same checkout and machine: peak RSS 452 MB without the
+ * override, 4,432 MB with it. `tsup`'s DTS worker walks 14 MB of published `.d.ts` instead of the
+ * workspace source, the runner OOMs, and the release pull request is blocked.
+ *
+ * It is also the wrong question. A floor is a claim about what a CONSUMER resolves, and a consumer
+ * has never had this workspace's copy — so the leg was validating a package against its own
+ * published output, which is a different thing from what it claims to check.
+ *
+ * WHY THIS AND NOT `isSibling`. Excluding every ecosystem sibling would gut the check: its primary
+ * case is `theokit-plugins`, where fourteen packages declare `theokit >=0.50.1` and `theokit` is a
+ * DIFFERENT repository. Overriding that duplicates nothing and the leg works. The predicate is
+ * "the dep is published by this very workspace", not "the dep is ours".
+ *
+ * An empty `workspace` fails OPEN — a caller that could not read the manifests must not silently
+ * drop every floor and report a green check that exercised nothing.
+ */
+export function floorsInOwnWorkspace({ untested, workspace }) {
+  const own = new Set(workspace ?? []);
+  return untested.filter((gap) => !own.has(gap.dep));
+}
+
 export function groupUntestedFloors(untested) {
   const byFloor = new Map();
   for (const gap of untested) {

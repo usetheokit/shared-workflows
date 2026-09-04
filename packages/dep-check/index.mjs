@@ -21,7 +21,7 @@
  * none of the other three mean anything either.
  */
 import { parseArgs } from "node:util";
-import { ceilingDrift, consumersLeftBehind, groupUntestedFloors, installedDrift, isSibling, peerInstallSpecs, pinnableSiblings, rangeFloor, sharedFloor, unpublishedSiblings, unpublishedWorkspaceVersions, untestedFloors } from "./src/checks.mjs";
+import { ceilingDrift, consumersLeftBehind, floorsInOwnWorkspace, groupUntestedFloors, installedDrift, isSibling, peerInstallSpecs, pinnableSiblings, rangeFloor, sharedFloor, unpublishedSiblings, unpublishedWorkspaceVersions, untestedFloors } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
 import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
 import { detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
@@ -444,7 +444,6 @@ const MAX_FLOOR_RUNS = 20;
  */
 async function commandFloorMatrix(root) {
   await lowestFloors(root);
-  const runs = groupUntestedFloors(lowestFloors.lastUntested ?? []);
 
   // #27 — the leg reinstalls from the registry, so a workspace version the registry does not have
   // yet turns every run into ERR_PNPM_NO_MATCHING_VERSION. An empty matrix is the honest answer;
@@ -454,6 +453,24 @@ async function commandFloorMatrix(root) {
     name: p.manifest.name,
     version: p.manifest.version,
   }));
+
+  // usetheokit/theokit-sdk#569 — drop the floors whose dep this workspace publishes. Overriding
+  // one of our own packages installs its published tarball beside the workspace copy (452 MB ->
+  // 4,432 MB peak, measured) and asks a question the leg cannot answer anyway.
+  const exercisable = floorsInOwnWorkspace({
+    untested: lowestFloors.lastUntested ?? [],
+    workspace: workspace.map((p) => p.name),
+  });
+  const dropped = (lowestFloors.lastUntested ?? []).length - exercisable.length;
+  if (dropped > 0) {
+    // Never silent: a floor nobody exercises must not read as a floor that passed.
+    console.error(
+      `::notice::${dropped} floor gap(s) skipped — the dep is published by this workspace, so ` +
+        "pinning it installs its own tarball beside the local copy. A consumer never resolves it " +
+        "that way, so the leg could not answer the question it was asked.",
+    );
+  }
+  const runs = groupUntestedFloors(exercisable);
   const published = {};
   for (const pkg of workspace) published[pkg.name] = await publishedVersions(pkg.name);
   const blocked = unpublishedWorkspaceVersions({ workspace, published });
