@@ -32,7 +32,7 @@ on:
           TOOL is a semver artifact, so a behaviour change is a version bump somebody reviewed.
           The pin lives here rather than in eleven callers.
         type: string
-        default: '0.9.4'
+        default: '0.10.0'
       run-floor-check:
         description: |
           Also run the suite against the BOTTOM of every declared sibling range, not only
@@ -106,6 +106,23 @@ jobs:
           corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
       - name: Setup Node
+        # NO `cache:` here, and that is a measurement rather than an omission.
+        #
+        # The obvious move is `cache: pnpm`, and it would be dead configuration. This job only runs
+        # when `base_ref == 'main'` — a pull request, never a push. GitHub lets a run restore a
+        # cache from its own branch or from the DEFAULT branch, so a cache only ever written on
+        # release pull requests is one no other run can reach: every leg would be a guaranteed
+        # miss, paying the save cost forever and restoring nothing.
+        #
+        # cloudflare/workers-sdk hit this exact shape and wrote it down: `actions/cache` saves from
+        # a post step declaring `post-if: success()`, so a job that fails for any reason never
+        # saves either — and this job has been failing.
+        #
+        # What it would be worth: the install steps took 26s and 10s of a 319s run, so ~8%. The two
+        # changes that matter took the other 92% (first-party floors dropped entirely; the build
+        # batched, -34%). Doing it properly means `cache/restore` + explicit `cache/save` plus a
+        # job on `push: [main]` to populate what the pull requests read — new machinery for 8%.
+        # Recorded so the next person finds the measurement instead of the intuition.
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ inputs.node-version }}
@@ -440,19 +457,29 @@ jobs:
         # workspace dependencies, and nothing else.
         env:
           PACKAGES: ${{ join(matrix.run.packages, ' ') }}
+        # ONE invocation, not one per package. Ten invocations re-plan the task graph ten times and
+        # rebuild the shared dependencies each round. Measured on theokit-plugins, whose leg claims
+        # 10 packages, cold cache, two rounds each:
+        #
+        #   loop (10 invocations)   35.2s, 39.6s
+        #   batched (1 invocation)  23.4s, 24.0s
+        #
+        # -34% and -39%, producing the same 10 `dist/` directories. `build-command` falls back to
+        # the single-package form for any package manager whose multi-package shape is unverified,
+        # so this is a speed-up where it applies and unchanged everywhere else.
         run: |
           set -euo pipefail
-          for pkg in $PACKAGES; do
-            cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" build-command --root repo --package "$pkg")
-            if [ -z "$cmd" ]; then
-              echo "no build script in this repository — nothing to build"
-              exit 0
-            fi
-            echo "::group::build $pkg"
-            echo "detected: $cmd"
-            (cd repo && $cmd)
-            echo "::endgroup::"
-          done
+          args=()
+          for pkg in $PACKAGES; do args+=(--package "$pkg"); done
+          cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" build-command --root repo "${args[@]}")
+          if [ -z "$cmd" ]; then
+            echo "no build script in this repository — nothing to build"
+            exit 0
+          fi
+          echo "::group::build $PACKAGES"
+          echo "detected: $cmd"
+          (cd repo && $cmd)
+          echo "::endgroup::"
 
       - name: Suite, for the packages that claim this floor
         env:

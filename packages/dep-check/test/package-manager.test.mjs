@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { detectPackageManager, pinOverrides } from "../src/package-manager.mjs";
+import { detectPackageManager, pinOverrides, batchedWithDeps } from "../src/package-manager.mjs";
 
 function scratch({ lockfile, manifest = { name: "x" } }) {
   const root = mkdtempSync(join(tmpdir(), "dep-check-pm-"));
@@ -69,5 +69,41 @@ describe("pinOverrides", () => {
 
   it("test_refuses_to_pin_when_it_cannot_tell_which_manager_to_pin_for", () => {
     expect(() => pinOverrides(scratch({ lockfile: null }), { a: "1" })).toThrow(/no lockfile/);
+  });
+});
+
+describe("batchedWithDeps — one invocation for a leg that claims several packages", () => {
+  it("test_pnpm_repeats_the_filter_flag_so_the_task_graph_is_planned_once", () => {
+    // Measured on theokit-plugins, whose floor leg claims 10 packages, cold cache, two rounds:
+    //
+    //   sequential (10 invocations)  35.2s, 39.6s
+    //   batched    (1 invocation)    23.4s, 24.0s
+    //
+    // -34% and -39%. Ten invocations re-plan the graph ten times and rebuild the shared
+    // dependencies each round; one invocation plans once and builds each dependency once.
+    const pnpm = { file: "pnpm-lock.yaml" };
+    expect(batchedWithDeps(pnpm, ["@theokit/a", "@theokit/b"])).toEqual([
+      "pnpm", "--filter", "@theokit/a...", "--filter", "@theokit/b...", "run",
+    ]);
+  });
+
+  it("test_a_single_package_batches_to_the_same_thing_the_loop_would_run", () => {
+    const pnpm = { file: "pnpm-lock.yaml" };
+    expect(batchedWithDeps(pnpm, ["@theokit/a"])).toEqual(["pnpm", "--filter", "@theokit/a...", "run"]);
+  });
+
+  it("test_returns_null_for_a_manager_whose_multi_package_form_was_not_verified", () => {
+    // npm has no `...` equivalent at all, and yarn's `yarn workspace <pkg> run` takes exactly one
+    // name — batching there needs `workspaces foreach`, a different command with different
+    // semantics. Returning null rather than guessing keeps the caller on the loop it already has,
+    // which is correct if slower. A wrong batch would silently build the wrong set.
+    expect(batchedWithDeps({ file: "package-lock.json" }, ["a", "b"])).toBeNull();
+    expect(batchedWithDeps({ file: "yarn.lock" }, ["a", "b"])).toBeNull();
+  });
+
+  it("test_an_empty_package_list_is_null_not_a_command_that_builds_everything", () => {
+    // `pnpm run build` with no filter builds the WHOLE workspace, which is the defect the
+    // per-package filter exists to prevent: packages whose own ranges exclude this floor fail.
+    expect(batchedWithDeps({ file: "pnpm-lock.yaml" }, [])).toBeNull();
   });
 });

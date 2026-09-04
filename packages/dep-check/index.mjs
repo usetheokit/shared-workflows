@@ -21,10 +21,10 @@
  * none of the other three mean anything either.
  */
 import { parseArgs } from "node:util";
-import { ceilingDrift, consumersLeftBehind, groupUntestedFloors, installedDrift, isSibling, peerInstallSpecs, pinnableSiblings, rangeFloor, sharedFloor, unpublishedSiblings, unpublishedWorkspaceVersions, untestedFloors } from "./src/checks.mjs";
+import { ceilingDrift, consumersLeftBehind, floorsInOwnWorkspace, groupUntestedFloors, installedDrift, isSibling, peerInstallSpecs, pinnableSiblings, rangeFloor, sharedFloor, unpublishedSiblings, unpublishedWorkspaceVersions, untestedFloors } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
 import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
-import { detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
+import { batchedWithDeps, detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
 import { installFromTarball } from "./src/tarball.mjs";
 
 const { values: flags, positionals } = parseArgs({
@@ -34,7 +34,11 @@ const { values: flags, positionals } = parseArgs({
     json: { type: "boolean", default: false },
     markdown: { type: "boolean", default: false },
     unlocked: { type: "boolean", default: false },
-    package: { type: "string" },
+    // Repeatable: the floor leg builds every package that claims the floor, and one invocation
+    // with N filters is measurably faster than N invocations (theokit-plugins, 10 packages, cold:
+    // 35.2s -> 23.4s). Without `multiple`, parseArgs keeps only the LAST occurrence, so a repeated
+    // flag would silently build one package and report the whole leg green.
+    package: { type: "string", multiple: true },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -444,7 +448,6 @@ const MAX_FLOOR_RUNS = 20;
  */
 async function commandFloorMatrix(root) {
   await lowestFloors(root);
-  const runs = groupUntestedFloors(lowestFloors.lastUntested ?? []);
 
   // #27 — the leg reinstalls from the registry, so a workspace version the registry does not have
   // yet turns every run into ERR_PNPM_NO_MATCHING_VERSION. An empty matrix is the honest answer;
@@ -454,6 +457,24 @@ async function commandFloorMatrix(root) {
     name: p.manifest.name,
     version: p.manifest.version,
   }));
+
+  // usetheokit/theokit-sdk#569 — drop the floors whose dep this workspace publishes. Overriding
+  // one of our own packages installs its published tarball beside the workspace copy (452 MB ->
+  // 4,432 MB peak, measured) and asks a question the leg cannot answer anyway.
+  const exercisable = floorsInOwnWorkspace({
+    untested: lowestFloors.lastUntested ?? [],
+    workspace: workspace.map((p) => p.name),
+  });
+  const dropped = (lowestFloors.lastUntested ?? []).length - exercisable.length;
+  if (dropped > 0) {
+    // Never silent: a floor nobody exercises must not read as a floor that passed.
+    console.error(
+      `::notice::${dropped} floor gap(s) skipped — the dep is published by this workspace, so ` +
+        "pinning it installs its own tarball beside the local copy. A consumer never resolves it " +
+        "that way, so the leg could not answer the question it was asked.",
+    );
+  }
+  const runs = groupUntestedFloors(exercisable);
   const published = {};
   for (const pkg of workspace) published[pkg.name] = await publishedVersions(pkg.name);
   const blocked = unpublishedWorkspaceVersions({ workspace, published });
@@ -535,7 +556,7 @@ function commandRunCommand(root, script) {
   // `--package` narrows it to one workspace member, which the per-package floor leg needs: it
   // installs a sibling at ONE package's declared floor, and running the whole workspace there
   // would fail packages whose own ranges exclude that version — the defect #4 was.
-  const base = flags.package ? detected.filtered(flags.package) : detected.run;
+  const base = flags.package?.length ? detected.filtered(flags.package[0]) : detected.run;
   console.log([...base, script || "test"].join(" "));
   return 0;
 }
@@ -580,7 +601,14 @@ function commandBuildCommand(root) {
   // measured on theokit-sdk, `pnpm build` at `@theokit/sdk@4.4.1` failed on `sdk-cache`, which
   // declares `>=4.54.0` and has no business being compiled there. That is the defect #4 was,
   // reintroduced one level down.
-  const base = flags.package ? detected.filteredWithDeps(flags.package) : detected.run;
+  // `--package` may be repeated. One invocation for the whole leg plans the task graph once and
+  // builds each shared dependency once; the per-package loop it replaces did both N times.
+  // Measured on theokit-plugins (10 packages, cold): 35.2s/39.6s sequential vs 23.4s/24.0s
+  // batched. `batchedWithDeps` returns null for managers whose multi-package form is unverified,
+  // and the single-package path is what it always was.
+  const packages = flags.package === undefined ? [] : [flags.package].flat();
+  const batched = packages.length > 1 ? batchedWithDeps(detected, packages) : null;
+  const base = batched ?? (packages.length ? detected.filteredWithDeps(packages[0]) : detected.run);
   if (script) console.log([...base, script].join(" "));
   return 0;
 }

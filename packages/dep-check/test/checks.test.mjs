@@ -7,6 +7,7 @@ import {
   isSibling,
   rangeFloor,
   groupUntestedFloors,
+  floorsInOwnWorkspace,
   unpublishedWorkspaceVersions,
   pinnableSiblings,
   sharedFloor,
@@ -607,5 +608,63 @@ describe("unpublishedWorkspaceVersions — the reason a floor leg cannot ask the
       published: { theokit: ["0.57.0"], "@theokit/http": ["0.4.0"], "@theokit/agents": ["12.0.0"] },
     });
     expect(blocked.map((b) => b.name)).toEqual(["@theokit/http", "theokit"]);
+  });
+});
+
+describe("floorsInOwnWorkspace — a floor the leg cannot exercise because it would duplicate the package", () => {
+  it("test_drops_a_floor_on_a_package_this_very_workspace_publishes", () => {
+    // usetheokit/theokit-sdk#569. The leg pins the dep under `pnpm.overrides` and reinstalls.
+    // When the dep is ALSO a package in this workspace, the override rewrites its spec into a
+    // plain semver range, destroying the `workspace:` protocol guarantee — pnpm "will refuse to
+    // resolve to anything other than a local workspace package" only while that protocol is in
+    // the spec. With `linkWorkspacePackages` defaulting to false, the range resolves from the
+    // registry and the published tarball lands beside the workspace copy.
+    //
+    // Measured on theokit-sdk, same checkout and machine: peak RSS 452 MB without the override,
+    // 4,432 MB with it. tsup's DTS worker walks 14 MB of published `.d.ts` instead of the
+    // workspace source, and the runner OOMs.
+    //
+    // It is also the wrong question: a floor is a claim about what a CONSUMER resolves, and a
+    // consumer never has this workspace's copy.
+    const untested = [
+      { pkg: "@theokit/sdk-tools", dep: "@theokit/sdk", range: ">=5.0.0-next.1", claims: "5.0.0", tested: "5.0.1" },
+      { pkg: "@theokit/sdk-tools", dep: "vite", range: ">=5.0.0", claims: "5.0.0", tested: "5.4.0" },
+    ];
+
+    const out = floorsInOwnWorkspace({ untested, workspace: ["@theokit/sdk", "@theokit/sdk-tools"] });
+
+    expect(out.map((r) => r.dep)).toEqual(["vite"]);
+  });
+
+  it("test_keeps_a_sibling_floor_that_lives_in_a_DIFFERENT_repository", () => {
+    // The primary case this whole check exists for: `theokit-plugins` has fourteen packages on
+    // `theokit >=0.50.1`, and `theokit` is a different repository. Overriding it duplicates
+    // nothing, so the leg works and must keep running. Excluding every sibling would have gutted
+    // the feature to fix the workspace-self case.
+    const untested = [
+      { pkg: "@theokit/plugin-a", dep: "theokit", range: ">=0.50.1", claims: "0.50.1", tested: "0.57.0" },
+    ];
+
+    const out = floorsInOwnWorkspace({ untested, workspace: ["@theokit/plugin-a", "@theokit/plugin-b"] });
+
+    expect(out.map((r) => r.dep)).toEqual(["theokit"]);
+  });
+
+  it("test_an_all_self_referential_input_yields_nothing_rather_than_a_leg_that_OOMs", () => {
+    const untested = [
+      { pkg: "@theokit/cli", dep: "@theokit/sdk", range: ">=5.0.0", claims: "5.0.0", tested: "5.0.1" },
+    ];
+
+    expect(floorsInOwnWorkspace({ untested, workspace: ["@theokit/sdk", "@theokit/cli"] })).toEqual([]);
+  });
+
+  it("test_an_empty_workspace_list_changes_nothing", () => {
+    // Fail open, not closed: a caller that could not read the workspace must not silently drop
+    // every floor and report a green check that exercised nothing.
+    const untested = [
+      { pkg: "@theokit/cli", dep: "@theokit/sdk", range: ">=5.0.0", claims: "5.0.0", tested: "5.0.1" },
+    ];
+
+    expect(floorsInOwnWorkspace({ untested, workspace: [] })).toHaveLength(1);
   });
 });
