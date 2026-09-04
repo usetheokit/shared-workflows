@@ -94,4 +94,21 @@ runs:
         EXTRA_ARGS: ${{ inputs.install-args }}
       # Frozen: CI installs what the lockfile says or fails. A non-frozen install in CI resolves
       # something the committed lockfile does not describe, and then the suite passes about that.
+      #
+      # NO `PNPM_CONFIG_TRUST_LOCKFILE`, and that is a measurement rather than an omission.
+      #
+      # vitest-dev/vitest sets it repo-wide (`ci.yml:23-26`) and documents ~15-20s saved per job by
+      # skipping pnpm's per-install supply-chain verification. Measured here on theokit-sdk,
+      # pnpm 10.34.1, two runs each against a warm store:
+      #
+      #   default (verification on)   2.78s, 2.54s
+      #   TRUST_LOCKFILE=true         2.52s, 2.54s
+      #
+      # Nothing. Their saving is real and ours is not — most plausibly because their number comes
+      # from a colder store with more packages to verify, and every job here restores a warm one
+      # through the `cache: pnpm` above.
+      #
+      # Recorded rather than left silent so nobody re-derives it from the same blog-shaped
+      # intuition: this trades a supply-chain check for zero measured seconds. Worth re-testing if
+      # the cache stops hitting, and only against a measurement.
       run: pnpm install --frozen-lockfile ${EXTRA_ARGS}
