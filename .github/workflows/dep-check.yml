@@ -106,6 +106,23 @@ jobs:
           corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
       - name: Setup Node
+        # NO `cache:` here, and that is a measurement rather than an omission.
+        #
+        # The obvious move is `cache: pnpm`, and it would be dead configuration. This job only runs
+        # when `base_ref == 'main'` — a pull request, never a push. GitHub lets a run restore a
+        # cache from its own branch or from the DEFAULT branch, so a cache only ever written on
+        # release pull requests is one no other run can reach: every leg would be a guaranteed
+        # miss, paying the save cost forever and restoring nothing.
+        #
+        # cloudflare/workers-sdk hit this exact shape and wrote it down: `actions/cache` saves from
+        # a post step declaring `post-if: success()`, so a job that fails for any reason never
+        # saves either — and this job has been failing.
+        #
+        # What it would be worth: the install steps took 26s and 10s of a 319s run, so ~8%. The two
+        # changes that matter took the other 92% (first-party floors dropped entirely; the build
+        # batched, -34%). Doing it properly means `cache/restore` + explicit `cache/save` plus a
+        # job on `push: [main]` to populate what the pull requests read — new machinery for 8%.
+        # Recorded so the next person finds the measurement instead of the intuition.
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ inputs.node-version }}
