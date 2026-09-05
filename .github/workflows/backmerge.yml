@@ -24,8 +24,18 @@
 # merges it, and an unmerged one leaves the branch exactly as far behind as no mechanism at all.
 # Every back-merge pull request in both repositories was merged, and all but one on the day it was
 # opened (`theokit-sdk` #511, #516, #519, #528, #540, #548; `theokit-gateways` #108, #111, #114,
-# #117, #120, #121). The failure mode did not happen, so the pull request keeps its advantage — a
-# reviewable record of what came back — at no observed cost.
+# #117, #120, #121).
+#
+# THAT EVIDENCE IS NARROWER THAN IT LOOKS, and the limit belongs here rather than in a review
+# comment nobody will find. Both repositories ALREADY opened pull requests — the sample is the
+# repositories that had already adopted the mechanism, which is survivorship. It shows the pull
+# request works where it was chosen; it does not show that `theokit`'s back-merges will be merged,
+# because under the push nobody there ever had to merge one. The first back-merge pull request in
+# a repository that is switching is the measurement this reasoning is still missing.
+#
+# The cost of being wrong is at least observable: an open pull request with the branch visibly
+# behind `main`, rather than a silent drift. If one sits, that is the signal to revisit — not a
+# reason to have waited.
 #
 # The push mechanism is not wrong. It is simply the one with no audit trail, and with two working
 # options the one that leaves a record is the one worth sharing.
