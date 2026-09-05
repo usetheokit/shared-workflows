@@ -94,10 +94,46 @@ jobs:
             exit 0
           fi
 
-          existing="$(gh pr list --base "${TARGET}" --head main --state open --json number \
-            --jq '.[0].number // empty')"
+          # `createdAt` comes back in the SAME call that was already asking for the number, so the
+          # age below costs no extra API request.
+          existing="$(gh pr list --base "${TARGET}" --head main --state open \
+            --json number,createdAt --jq '.[0] | select(.number) | "\(.number) \(.createdAt)"')"
           if [ -n "${existing}" ]; then
-            echo "✓ PR #${existing} is already open and will pick these commits up"
+            number="${existing%% *}"
+            created="${existing##* }"
+            hours=$(( ( $(date -u +%s) - $(date -u -d "${created}" +%s) ) / 3600 ))
+
+            # SAYING IT IS OPEN IS NOT ENOUGH, and that is this block's whole reason. Before this,
+            # a pull request that had been sitting for ten hours printed the same line as one
+            # opened four minutes ago — usetheokit/theokit-sdk#548, where the branch stayed a
+            # release behind and the drift was found by someone running `changeset status` by hand
+            # before a cut. The mechanism worked; nothing reported that its output was ignored.
+            #
+            # A WARNING RATHER THAN A FAILURE, deliberately. This job runs on a push to `main`, and
+            # failing it would paint `main` red for something `main` did not do — a red that blocks
+            # nothing is a red people learn to scroll past. The annotation shows on the run and in
+            # the Actions summary, which is where somebody looking at the release line will be.
+            #
+            # FOUR HOURS, and the number comes from the distribution rather than from a round
+            # figure. Every back-merge pull request in the two repositories that had this workflow,
+            # measured 2026-09-05 as the hours between opening and merging:
+            #
+            #   theokit-sdk        10, 1, 1, 0, 0, 0, 0, 12, 0, 0, 0, 0
+            #   theokit-gateways    0, 11, 0, 0, 0, 0, 0, 0
+            #
+            # Seventeen of twenty merged inside an hour. The three that did not took 10, 11 and 12.
+            # There is no middle: the gap between normal and stuck is an order of magnitude, so any
+            # threshold in it separates them cleanly. Four is four times the slowest ordinary case
+            # and below all three outliers.
+            #
+            # The first draft of this said twelve hours, reasoning from "ten of twelve merged the
+            # same day" — which would have missed usetheokit/theokit-sdk#548 at ten hours, the very
+            # incident that prompted the check. "Same day" was a summary of the data, and the
+            # summary lost the shape the threshold needed.
+            if [ "${hours}" -ge 4 ]; then
+              echo "::warning title=Back-merge pull request is stale::PR #${number} (main → ${TARGET}) has been open ${hours}h. While it sits, ${TARGET} keeps the previous version and holds changesets that already shipped, so a release cut from it re-releases them."
+            fi
+            echo "✓ PR #${number} is already open (${hours}h) and will pick these commits up"
             exit 0
           fi
 
