@@ -1,0 +1,111 @@
+# Opens a pull request back-merging `main` into a long-lived branch after a release.
+#
+# Called as:
+#
+#       jobs:
+#         backmerge:
+#           uses: usetheokit/shared-workflows/.github/workflows/backmerge.yml@v1
+#           permissions:
+#             contents: read
+#             pull-requests: write
+#
+# WHY IT EXISTS. A release bumps versions and deletes the consumed `.changeset/*.md` on `main`,
+# and nothing carries either back. So a long-lived branch falls one release further behind on
+# every cut, silently, and the next promotion cut from that state re-releases what already
+# shipped.
+#
+# WHY A PULL REQUEST AND NOT A PUSH, decided by measurement rather than by preference. Three
+# repositories had a back-merge and two mechanisms: `theokit` pushed straight to `workspace`,
+# `theokit-sdk` and `theokit-gateways` opened a pull request. The obvious objection to the push —
+# that it bypasses review — turned out to be false: measured 2026-09-05, `workspace` carries NO
+# branch protection in any of the ten consumers, so neither mechanism bypasses anything.
+#
+# What decided it was the opposite worry, also measured. A pull request only helps if somebody
+# merges it, and an unmerged one leaves the branch exactly as far behind as no mechanism at all.
+# Every back-merge pull request in both repositories was merged, and all but one on the day it was
+# opened (`theokit-sdk` #511, #516, #519, #528, #540, #548; `theokit-gateways` #108, #111, #114,
+# #117, #120, #121). The failure mode did not happen, so the pull request keeps its advantage — a
+# reviewable record of what came back — at no observed cost.
+#
+# The push mechanism is not wrong. It is simply the one with no audit trail, and with two working
+# options the one that leaves a record is the one worth sharing.
+name: Back-merge
+
+on:
+  workflow_call:
+    inputs:
+      target-branch:
+        description: >-
+          The long-lived branch that must not fall behind `main`. Every current caller uses
+          `workspace`, which is where work is born; a repository with a second permanent branch
+          calls this again with a different value rather than growing a matrix here.
+        type: string
+        required: false
+        default: workspace
+
+# One at a time: two pushes to main in quick succession would otherwise race to open the same
+# pull request.
+concurrency: backmerge-${{ inputs.target-branch }}-${{ github.ref }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  backmerge:
+    name: main → ${{ inputs.target-branch }}
+    runs-on: ubuntu-latest
+    # Two git counts and at most one `gh pr create`. A tight ceiling turns a hang into a fast,
+    # obvious failure instead of a runner held for GitHub's six-hour default.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The counts below compare two branches, which needs their histories.
+          fetch-depth: 0
+          # The pull request is opened through `gh`, authenticated from GH_TOKEN in the step
+          # below. Nothing here uses the git credential, so it does not stay in `.git/config`.
+          persist-credentials: false
+
+      - name: Open or report the back-merge pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target-branch }}
+        run: |
+          set -euo pipefail
+
+          behind="$(git rev-list --count "origin/${TARGET}..origin/main")"
+          echo "${TARGET} is ${behind} commit(s) behind main"
+
+          # The steady state. Saying so explicitly keeps a green run from being read as "the job
+          # did not run" — a distinction this ecosystem keeps paying for elsewhere.
+          if [ "${behind}" -eq 0 ]; then
+            echo "✓ nothing to back-merge"
+            exit 0
+          fi
+
+          existing="$(gh pr list --base "${TARGET}" --head main --state open --json number \
+            --jq '.[0].number // empty')"
+          if [ -n "${existing}" ]; then
+            echo "✓ PR #${existing} is already open and will pick these commits up"
+            exit 0
+          fi
+
+          # `workspace` is a LIVE checkout, unlike `develop`. Opening the pull request touches no
+          # working tree, but whoever merges it may need a clean one, and saying so in the body
+          # costs a line and saves a confusing refusal.
+          note=""
+          if [ "${TARGET}" = "workspace" ]; then
+            note=$'\n\n`workspace` is where work is born and is usually checked out somewhere with\nuncommitted changes. Opening this pull request touches nothing; merging it may need a clean tree.'
+          fi
+
+          gh pr create \
+            --base "${TARGET}" \
+            --head main \
+            --title "chore: back-merge main into ${TARGET}" \
+            --body "Opened automatically after a push to \`main\`.
+
+          The release bump and the consumed \`.changeset/*.md\` deletions live only on \`main\` until
+          this lands. While it is open, \`${TARGET}\` still declares the previous version and still
+          holds changesets that have already shipped — so a promotion cut from that state would
+          re-release them.${note}"

@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`backmerge.yml` is now a reusable workflow, and which mechanism it shares was decided by
+  measurement (#53).** Three repositories had a back-merge and two mechanisms: `theokit` pushed
+  straight to `workspace`, `theokit-sdk` and `theokit-gateways` opened a pull request. Three
+  instances of one job under two names (`backmerge.yml` and `release-backmerge.yml`), which is
+  also why a grep for one of them reported two rather than three.
+
+  The obvious objection to the push — that it bypasses review — is **false**. Measured
+  2026-09-05: `workspace` carries no branch protection in ANY of the ten consumers, so neither
+  mechanism bypasses anything. That was the reason this had been left undecided, and it did not
+  survive being checked.
+
+  What decided it was the opposite worry, also measured. A pull request only helps if somebody
+  merges it, and an unmerged one leaves the branch exactly as far behind as no mechanism at all.
+  Every back-merge pull request in both repositories was merged, all but one on the day it was
+  opened. The failure mode did not happen, so the pull request keeps its advantage — a reviewable
+  record of what came back — at no observed cost.
+
+  The push mechanism is not wrong. With two working options, the one that leaves a record is the
+  one worth sharing.
+
 - **`actions/setup` does NOT accept `registry-url`, and now says why (#54, corrected).** The
   entry this replaces claimed that seven of the nine `release.yml` pass `registry-url` and that
   its absence was what kept them off this action. **Both halves were false.** The grep behind the
