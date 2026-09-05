@@ -1,0 +1,132 @@
+# `develop` accepts one thing: the promotion from `workspace`.
+#
+# Called as:
+#
+#       jobs:
+#         promotion-gate:
+#           uses: usetheokit/shared-workflows/.github/workflows/promotion-gate.yml@v1
+#
+# WHY A WORKFLOW AND NOT THE HOOK. `rules/git-safety.md` § 1 says `develop` "advances only by
+# promoting `workspace`" and to "never merge anything other than `workspace` into it", and
+# `hooks/validate-command.sh` blocks it — for a `git merge` typed in a local checkout. Nothing merges
+# that way. Promotions land through `gh pr merge`, server-side, where no local hook exists. The rule
+# was enforced on the path nobody uses and unenforced on the path everybody uses.
+#
+# That is not hypothetical, and both numbers below were measured rather than estimated:
+#
+#   - Across the eleven repositories in this organisation that have a `develop` (2026-08-31):
+#     exactly ONE had a check that looks at where a pull request comes from.
+#   - `theokit-sdk` had accumulated 48 merged `main → develop` pull requests through the gap —
+#     #193 on 2026-08-11 through #493 on 2026-08-31 — against a rule that forbids them and a hook
+#     that blocks them, because the hook watched the path nobody uses.
+#
+# The 48 was first reported as thirty, which is `gh pr list`'s default page size and not a count.
+# A total landing exactly on the default limit is a total nobody counted. The difference is not
+# pedantic: thirty over twenty days reads as history, 48 reads as current practice.
+#
+# It does NOT replace the hook. The hook guards the local path and this guards the server path; a
+# repository with only one of them is guarded on one side. `git-safety.md` § 1 already distinguishes
+# the hook (origin) from branch protection (review) — this is the third column that was missing.
+#
+# REQUIRED, or it is decoration. An advisory check is a green tick nobody reads; what makes it a
+# gate is branch protection listing it. Adding it as required BEFORE it has ever reported would
+# block every pull request on a context that never arrives — so it is armed after its first green
+# run in a repository, never in the same change.
+#
+# NO `paths:` FILTER in the caller, deliberately. This is marked required in branch protection, and
+# a required check that does not run on some pull requests deadlocks them permanently.
+#
+# WHAT IT DOES NOT COVER. A push directly to `develop`, which branch protection already refuses, and
+# a merge performed by someone with permission to bypass protection. It answers one question — did
+# this work originate on `workspace` — which is the question the rule asks.
+#
+# WHY IT LIVES HERE. Measured 2026-09-05 across the ten consumers of this repository: nine held
+# byte-identical copies of this gate and one held an improved variant, so a fix reached one
+# repository at a time and the improvements never travelled. The `@v1` ref is what makes a change
+# to the policy reach every caller; that is the same argument written at the top of `dep-check.yml`,
+# with the same limit — the POLICY moves by ref, and anything versioned moves by a bump somebody
+# reviewed.
+#
+# WHAT WAS DELIBERATELY NOT CARRIED OVER. The `theokit-sdk` variant declared a `concurrency` group
+# with `cancel-in-progress`. This job is two string comparisons with no checkout and finishes in
+# seconds, so cancelling a superseded run reclaims a few seconds of a runner, and GitHub already
+# reports the newest run's conclusion as the check status — the stale-verdict problem the setting
+# usually solves does not arise here. It is left out rather than copied, so that nobody reads its
+# absence as an oversight. `timeout-minutes` below WAS carried over: it guards a different failure
+# (a hang holding a runner for the six-hour default), which no other mechanism covers.
+name: Promotion gate
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  head-must-be-workspace:
+    name: develop accepts only workspace
+    runs-on: ubuntu-latest
+    # Two string comparisons and no checkout; it has never taken more than a few seconds. A tight
+    # ceiling turns a hang into a fast, obvious failure instead of a runner held for GitHub's
+    # six-hour default.
+    timeout-minutes: 5
+    steps:
+      - name: Refuse a head that is not workspace
+        env:
+          # Through the environment, never `${{ }}` inside `run:`. On a pull request from a fork the
+          # head branch name is text the author chose, so interpolating it into the script would put
+          # an attacker's string where the shell parses commands.
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          # The branch NAME is not enough. The head ref on a fork pull request is the branch name
+          # inside THE FORK, so anyone may fork a public repository, name a branch `workspace`, and
+          # satisfy a name-only check. The promotion comes from this repository's own `workspace` or
+          # it is not the promotion.
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+
+          echo "head: ${HEAD_REPO}:${HEAD_REF}  ->  base: ${BASE_REPO}:${BASE_REF}"
+
+          if [ "${HEAD_REPO}" != "${BASE_REPO}" ]; then
+            echo "::error::a fork cannot promote into develop. The head is '${HEAD_REPO}', not '${BASE_REPO}'."
+            echo
+            echo "Work originates on this repository's own workspace branch. A branch named"
+            echo "'workspace' in a fork is a different branch that happens to share a name."
+            exit 1
+          fi
+
+          if [ "${HEAD_REF}" = "workspace" ]; then
+            echo "head is this repository's workspace — the promotion the rule allows"
+            exit 0
+          fi
+
+          # The changesets bot opens its OWN pull request, named by `changesets/action` and never by
+          # a human. Where a repository's release runs from `develop`, that pull request targets
+          # `develop` and lands here. It is not the promotion this gate exists to guard
+          # (`git-safety.md` § 1 is about where WORK originates); it is generated tooling output
+          # under a different contract. Exempted by EXACT name, not a prefix match, and only
+          # reachable after the fork check above already confirmed HEAD_REPO == BASE_REPO — a fork
+          # cannot forge this repository's own bot branch.
+          #
+          # Found 2026-09-03 (usetheokit/theokit-sdk#535): every Version Packages pull request
+          # against develop failed this check unconditionally, because no exemption existed.
+          # GitHub's branch protection refused even an admin override — the only real fix was here.
+          #
+          # Harmless where it is unused: measured 2026-09-05, every consumer releases from `main`,
+          # so the bot's branch is `changeset-release/main` and never reaches this gate. The
+          # exemption costs those repositories nothing and spares the next one the same deadlock.
+          if [ "${HEAD_REF}" = "changeset-release/develop" ]; then
+            echo "head is the changesets bot's own branch — generated tooling output, not a promotion"
+            exit 0
+          fi
+
+          echo "::error::'${HEAD_REF}' cannot be merged into develop."
+          echo
+          echo "rules/git-safety.md § 1: develop advances ONLY by promoting workspace, and nothing"
+          echo "other than workspace may be merged into it. Work originates on workspace; develop"
+          echo "integrates it."
+          echo
+          echo "Land this on workspace first, then open workspace -> develop."
+          exit 1
