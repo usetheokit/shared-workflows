@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The back-merge says how long its pull request has been open (usetheokit/theokit-sdk#566).**
+  The workflow opened the pull request and stopped. A pull request sitting for ten hours printed
+  the same line as one opened four minutes ago, so nothing distinguished "the mechanism ran" from
+  "the mechanism ran and nobody acted on it" — `usetheokit/theokit-sdk#548` sat that long and the
+  drift was found by someone running `changeset status` by hand before a release cut.
+
+  The age now appears on every run, and past four hours it becomes a warning annotation.
+
+  **Four hours is from the distribution, not a round number.** Every back-merge pull request in the
+  two repositories that had this workflow, in hours between opening and merging:
+
+  ```
+  theokit-sdk        10, 1, 1, 0, 0, 0, 0, 12, 0, 0, 0, 0
+  theokit-gateways    0, 11, 0, 0, 0, 0, 0, 0
+  ```
+
+  Seventeen of twenty merged inside an hour; the three that did not took 10, 11 and 12. The gap
+  between normal and stuck is an order of magnitude, so any threshold inside it separates them
+  cleanly — four is four times the slowest ordinary case and below every outlier.
+
+  The first draft said twelve hours, reasoning from "ten of twelve merged the same day". That would
+  have missed the ten-hour incident that prompted the check: the summary was true and lost the
+  shape the threshold needed.
+
+  A warning rather than a failure, deliberately: this job runs on a push to `main`, and failing it
+  would paint `main` red for something `main` did not do. A red that blocks nothing is a red people
+  learn to scroll past.
+
+  `createdAt` comes back in the call that was already asking for the number, so this costs no extra
+  API request.
+
 - **`backmerge.yml` is now a reusable workflow, and which mechanism it shares was decided by
   measurement (#53).** Three repositories had a back-merge and two mechanisms: `theokit` pushed
   straight to `workspace`, `theokit-sdk` and `theokit-gateways` opened a pull request. Three
@@ -26,6 +57,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every back-merge pull request in both repositories was merged, all but one on the day it was
   opened. The failure mode did not happen, so the pull request keeps its advantage — a reviewable
   record of what came back — at no observed cost.
+
+  **That evidence is narrower than it looks**, and the workflow now says so rather than leaving the
+  limit to a review comment. Both repositories ALREADY opened pull requests — the sample is the
+  repositories that had adopted the mechanism, which is survivorship. It shows the pull request
+  works where it was chosen; it does not show that `theokit`'s back-merges will be merged, because
+  under the push nobody there ever had to merge one. The first back-merge pull request in a
+  repository that is switching is the measurement this reasoning is still missing. Raised by the
+  session that maintains `theokit`, on reviewing the change to its own repository.
+
+  The cost of being wrong is at least observable — an open pull request with the branch visibly
+  behind `main`, rather than a silent drift.
 
   The push mechanism is not wrong. With two working options, the one that leaves a record is the
   one worth sharing.

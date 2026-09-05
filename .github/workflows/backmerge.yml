@@ -24,8 +24,18 @@
 # merges it, and an unmerged one leaves the branch exactly as far behind as no mechanism at all.
 # Every back-merge pull request in both repositories was merged, and all but one on the day it was
 # opened (`theokit-sdk` #511, #516, #519, #528, #540, #548; `theokit-gateways` #108, #111, #114,
-# #117, #120, #121). The failure mode did not happen, so the pull request keeps its advantage — a
-# reviewable record of what came back — at no observed cost.
+# #117, #120, #121).
+#
+# THAT EVIDENCE IS NARROWER THAN IT LOOKS, and the limit belongs here rather than in a review
+# comment nobody will find. Both repositories ALREADY opened pull requests — the sample is the
+# repositories that had already adopted the mechanism, which is survivorship. It shows the pull
+# request works where it was chosen; it does not show that `theokit`'s back-merges will be merged,
+# because under the push nobody there ever had to merge one. The first back-merge pull request in
+# a repository that is switching is the measurement this reasoning is still missing.
+#
+# The cost of being wrong is at least observable: an open pull request with the branch visibly
+# behind `main`, rather than a silent drift. If one sits, that is the signal to revisit — not a
+# reason to have waited.
 #
 # The push mechanism is not wrong. It is simply the one with no audit trail, and with two working
 # options the one that leaves a record is the one worth sharing.
@@ -84,10 +94,46 @@ jobs:
             exit 0
           fi
 
-          existing="$(gh pr list --base "${TARGET}" --head main --state open --json number \
-            --jq '.[0].number // empty')"
+          # `createdAt` comes back in the SAME call that was already asking for the number, so the
+          # age below costs no extra API request.
+          existing="$(gh pr list --base "${TARGET}" --head main --state open \
+            --json number,createdAt --jq '.[0] | select(.number) | "\(.number) \(.createdAt)"')"
           if [ -n "${existing}" ]; then
-            echo "✓ PR #${existing} is already open and will pick these commits up"
+            number="${existing%% *}"
+            created="${existing##* }"
+            hours=$(( ( $(date -u +%s) - $(date -u -d "${created}" +%s) ) / 3600 ))
+
+            # SAYING IT IS OPEN IS NOT ENOUGH, and that is this block's whole reason. Before this,
+            # a pull request that had been sitting for ten hours printed the same line as one
+            # opened four minutes ago — usetheokit/theokit-sdk#548, where the branch stayed a
+            # release behind and the drift was found by someone running `changeset status` by hand
+            # before a cut. The mechanism worked; nothing reported that its output was ignored.
+            #
+            # A WARNING RATHER THAN A FAILURE, deliberately. This job runs on a push to `main`, and
+            # failing it would paint `main` red for something `main` did not do — a red that blocks
+            # nothing is a red people learn to scroll past. The annotation shows on the run and in
+            # the Actions summary, which is where somebody looking at the release line will be.
+            #
+            # FOUR HOURS, and the number comes from the distribution rather than from a round
+            # figure. Every back-merge pull request in the two repositories that had this workflow,
+            # measured 2026-09-05 as the hours between opening and merging:
+            #
+            #   theokit-sdk        10, 1, 1, 0, 0, 0, 0, 12, 0, 0, 0, 0
+            #   theokit-gateways    0, 11, 0, 0, 0, 0, 0, 0
+            #
+            # Seventeen of twenty merged inside an hour. The three that did not took 10, 11 and 12.
+            # There is no middle: the gap between normal and stuck is an order of magnitude, so any
+            # threshold in it separates them cleanly. Four is four times the slowest ordinary case
+            # and below all three outliers.
+            #
+            # The first draft of this said twelve hours, reasoning from "ten of twelve merged the
+            # same day" — which would have missed usetheokit/theokit-sdk#548 at ten hours, the very
+            # incident that prompted the check. "Same day" was a summary of the data, and the
+            # summary lost the shape the threshold needed.
+            if [ "${hours}" -ge 4 ]; then
+              echo "::warning title=Back-merge pull request is stale::PR #${number} (main → ${TARGET}) has been open ${hours}h. While it sits, ${TARGET} keeps the previous version and holds changesets that already shipped, so a release cut from it re-releases them."
+            fi
+            echo "✓ PR #${number} is already open (${hours}h) and will pick these commits up"
             exit 0
           fi
 
