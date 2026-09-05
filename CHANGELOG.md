@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`actions/setup` accepts `registry-url`, which is what kept every release workflow off it
+  (#54).** Measured 2026-09-05 across the ten consumers: **22 workflows set up Node and pnpm by
+  hand, and exactly one file used this action.** The largest group of duplicates is the nine
+  `release.yml`, and **seven of them pass `registry-url`** — so adopting the shared setup meant
+  losing npm authentication. One missing passthrough was holding the whole adoption.
+
+  Everything else was already equivalent, including the part most likely to be lost in a rewrite:
+  the action's `cache-dependency-path` already lists `package.json` beside `pnpm-lock.yaml`, which
+  is the fix for a pnpm major bump restoring a store the new pnpm reads as inconsistent
+  (`ERR_PNPM_MISSING_PACKAGE_INDEX_FILE`).
+
+  Exercised rather than asserted: the action's own CI job now runs it with a registry and checks
+  that `setup-node` wrote an `.npmrc` naming the registry and binding `_authToken`. The assertion
+  reads the FILE rather than `npm config get registry`, because the latter would go green on a
+  registry that came from somewhere else.
+
 - **`promotion-gate.yml` is now a reusable workflow, so the gate that protects `develop` has one
   home instead of ten (#51).** Measured 2026-09-05 across the ten consumers of this repository:
   nine held **byte-identical** copies of a 74-line gate (identical after stripping comments and

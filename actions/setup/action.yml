@@ -35,6 +35,19 @@ inputs:
       has to say so here — otherwise the install runs against nothing and reports success.
     required: false
     default: '.'
+  registry-url:
+    description: >-
+      Passed straight to `actions/setup-node`, which writes an `.npmrc` binding
+      `_authToken` to `NODE_AUTH_TOKEN`. A publishing job needs it; nothing else does, so it is
+      empty by default and `setup-node` then writes no `.npmrc` at all.
+
+      This input exists because its absence was what kept every release workflow off this action.
+      Measured 2026-09-05 across the ten consumers: 22 workflows set up Node and pnpm by hand and
+      exactly one file used this action. Of the nine `release.yml`, SEVEN pass `registry-url` —
+      so for the largest group of duplicates, adopting the shared setup meant losing npm
+      authentication. One missing passthrough was holding the whole adoption.
+    required: false
+    default: ''
 
 outputs:
   package-manager-version:
@@ -62,6 +75,8 @@ runs:
       with:
         node-version: ${{ inputs.node-version }}
         node-version-file: ${{ inputs.node-version == '' && format('{0}/.nvmrc', inputs.working-directory) || '' }}
+        # Empty writes no `.npmrc`, which is what every non-publishing job wants.
+        registry-url: ${{ inputs.registry-url }}
         cache: pnpm
         # The cache key must change when the package manager does. setup-node keys the pnpm store on
         # the lockfile alone, so a pnpm 9 -> 10 bump leaves the key identical and the job restores a
