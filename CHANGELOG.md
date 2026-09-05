@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`promotion-gate.yml` is now a reusable workflow, so the gate that protects `develop` has one
+  home instead of ten (#51).** Measured 2026-09-05 across the ten consumers of this repository:
+  nine held **byte-identical** copies of a 74-line gate (identical after stripping comments and
+  blank lines) and one, `theokit-sdk`, held a variant that had learned two things the other nine
+  never received.
+
+  That is the shape this repository exists to remove. A fix written into one copy reaches one
+  repository, and the improvements the tenth made stayed there for as long as nobody compared.
+
+  The shared version is the **union**, not either copy:
+
+  | carried from | what |
+  |---|---|
+  | the nine | the multi-line diagnostics that cite `rules/git-safety.md` § 1 and tell the author what to do next |
+  | `theokit-sdk` | `timeout-minutes`, and the exemption for the changesets bot's own `changeset-release/develop` branch |
+
+  The changesets exemption is what `usetheokit/theokit-sdk#535` cost on 2026-09-03: every Version
+  Packages pull request against `develop` failed the gate unconditionally, and branch protection
+  refused even an admin override. It is harmless where unused — measured, every consumer releases
+  from `main`, so the bot's branch is `changeset-release/main` and never reaches this gate — and it
+  spares the next repository that moves its release the same deadlock.
+
+  `concurrency` was deliberately **not** carried over, and the workflow says so rather than leaving
+  its absence to read as an oversight: the job is two string comparisons with no checkout, and
+  GitHub already reports the newest run's conclusion as the check status.
+
 - **A preview that falls back to publishing everything now says it is not installable (#48).** The
   scoping added in `#46`/`#47` leaves one case open: a commit that touches no package directory —
   a CI change, a docs change, a root config change. There the enumeration publishes the whole set in
