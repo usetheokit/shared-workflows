@@ -10,21 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`actions/setup` accepts `registry-url`, which is what kept every release workflow off it
-  (#54).** Measured 2026-09-05 across the ten consumers: **22 workflows set up Node and pnpm by
-  hand, and exactly one file used this action.** The largest group of duplicates is the nine
-  `release.yml`, and **seven of them pass `registry-url`** — so adopting the shared setup meant
-  losing npm authentication. One missing passthrough was holding the whole adoption.
+- **`actions/setup` does NOT accept `registry-url`, and now says why (#54, corrected).** The
+  entry this replaces claimed that seven of the nine `release.yml` pass `registry-url` and that
+  its absence was what kept them off this action. **Both halves were false.** The grep behind the
+  number counted the word wherever it appeared, and where it appears is inside a comment in seven
+  of those workflows explaining why the setting is deliberately absent:
 
-  Everything else was already equivalent, including the part most likely to be lost in a rewrite:
-  the action's `cache-dependency-path` already lists `package.json` beside `pnpm-lock.yaml`, which
-  is the fix for a pnpm major bump restoring a store the new pnpm reads as inconsistent
-  (`ERR_PNPM_MISSING_PACKAGE_INDEX_FILE`).
+  > *"NO `registry-url`. It looks harmless and is not: setup-node writes
+  > `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into an npmrc UNCONDITIONALLY and points
+  > NPM_CONFIG_USERCONFIG at it, then exports NODE_AUTH_TOKEN only if the caller supplied one —
+  > which, under OIDC, nobody does."*
 
-  Exercised rather than asserted: the action's own CI job now runs it with a registry and checks
-  that `setup-node` wrote an `.npmrc` naming the registry and binding `_authToken`. The assertion
-  reads the FILE rather than `npm config get registry`, because the latter would go green on a
-  registry that came from somewhere else.
+  Measured properly, by matching the YAML key rather than the string: **zero of nine use it**, and
+  all nine publish through `actions/npm-oidc`. The input served nobody, and its docstring invited
+  a configuration this ecosystem had already found and documented as harmful — worse than absent,
+  because the next person converting a release workflow would have believed it.
+
+  Removed, with the reasoning moved next to the `setup-node` call so the absence reads as a
+  decision. The CI job now asserts the opposite property: that the action writes no `_authToken`
+  npmrc on a caller's behalf.
+
+  What survives the correction is the finding that prompted it: **22 workflows across the ten
+  consumers set up Node and pnpm by hand and exactly one file uses this action.** The blocker was
+  imagined; the duplication is real, and the action was a drop-in replacement all along.
 
 - **`promotion-gate.yml` is now a reusable workflow, so the gate that protects `develop` has one
   home instead of ten (#51).** Measured 2026-09-05 across the ten consumers of this repository:
