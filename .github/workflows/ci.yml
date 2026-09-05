@@ -127,32 +127,22 @@ jobs:
           echo "wanted=${expected} actual=${actual}"
           case "${actual}" in "v${expected}"*) ;; *) echo "::error::node mismatch"; exit 1 ;; esac
 
-      # `registry-url` is what kept every release workflow off this action: measured 2026-09-05,
-      # seven of the nine `release.yml` in this ecosystem pass it, and the action did not accept
-      # it — so adopting the shared setup meant losing npm authentication. It is a passthrough to
-      # `actions/setup-node`, and a passthrough nobody exercises is a passthrough that can be
-      # silently dropped in a refactor.
-      - name: Run the action again, asking for a registry
-        uses: ./actions/setup
-        with:
-          node-version: ${{ matrix.node }}
-          working-directory: fixtures/pnpm-repo
-          # No install: the toolchain and the .npmrc are the whole subject here.
-          install: 'false'
-          registry-url: 'https://registry.npmjs.org'
-      - name: setup-node wrote an npmrc binding the token
+      # The action writes NO npmrc, and that is the property worth holding still. `setup-node`
+      # writes `_authToken=${NODE_AUTH_TOKEN}` whenever it is given a `registry-url`, and under
+      # OIDC nobody exports NODE_AUTH_TOKEN — so the publish would run against a config naming a
+      # credential that does not exist. Every release workflow in this ecosystem avoids that by
+      # not passing the input; this asserts the action does not reintroduce it on their behalf.
+      - name: No npmrc was written on the action's behalf
         shell: bash
-        # Asserting the FILE rather than `npm config get registry`, because the latter reads the
-        # effective config and would go green on a registry that came from somewhere else — the
-        # claim under test is that this action caused it.
         run: |
           set -euo pipefail
-          : "${NPM_CONFIG_USERCONFIG:?setup-node did not point NPM_CONFIG_USERCONFIG anywhere}"
-          echo "userconfig: ${NPM_CONFIG_USERCONFIG}"
-          test -f "${NPM_CONFIG_USERCONFIG}"
-          grep -q 'registry.npmjs.org' "${NPM_CONFIG_USERCONFIG}"
-          grep -q '_authToken' "${NPM_CONFIG_USERCONFIG}"
-          echo "npmrc names the registry and binds _authToken"
+          if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "${NPM_CONFIG_USERCONFIG}" ] \
+             && grep -q '_authToken' "${NPM_CONFIG_USERCONFIG}"; then
+            echo "::error::the setup action produced an npmrc binding _authToken; under OIDC that names a credential nobody exports"
+            cat "${NPM_CONFIG_USERCONFIG}"
+            exit 1
+          fi
+          echo "no _authToken npmrc — an OIDC publish is not handed a phantom credential"
 
   npm-oidc-action:
     name: npm-oidc action
