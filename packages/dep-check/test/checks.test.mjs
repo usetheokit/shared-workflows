@@ -287,6 +287,27 @@ describe("unpublishedSiblings — what check D cannot get from the registry yet"
     expect(out[0].reason).toBe("contract-moved");
   });
 
+  it("test_a_workspace_protocol_range_is_not_a_moved_contract", () => {
+    // The workspace manifest says `workspace:^` and the published one says the version pnpm
+    // rewrote it to at pack time. Comparing those two raw strings finds a difference in EVERY
+    // package that depends on a sibling, which would hand a local tarball to almost everything and
+    // undo the narrowness the test above protects. A local protocol is a placeholder, not a
+    // contract — the version it resolves to is already the `unpublished` branch's job.
+    const ws = [
+      {
+        name: "@theokit/agents",
+        version: "13.0.0",
+        dir: "/w/packages/agents",
+        manifest: { dependencies: { "@theokit/presenter": "workspace:^", "@theokit/sdk": "^5.0.0" } },
+      },
+    ];
+    const pub = { "@theokit/agents": ["13.0.0"] };
+    const manifests = {
+      "@theokit/agents": { "13.0.0": { dependencies: { "@theokit/presenter": "0.9.0", "@theokit/sdk": "^5.0.0" } } },
+    };
+    expect(unpublishedSiblings({ references: [{ dep: "@theokit/agents" }], workspace: ws, published: pub, manifests })).toEqual([]);
+  });
+
   it("test_leaves_a_published_version_alone_when_the_local_contract_is_identical", () => {
     // The narrowness is the point (#659). Substituting whenever a package is in the workspace would
     // stop testing what a consumer resolves — the reason the skip exists at all. Only a contract

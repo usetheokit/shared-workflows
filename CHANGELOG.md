@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.11.1] - 2026-09-07
+
+### Fixed
+
+- **A `workspace:` range no longer reads as a moved contract (usetheokit/theokit#659).** 0.11.0
+  compared the workspace manifest against the published one key by key, and `pnpm pack` rewrites
+  `workspace:^` to the version it resolves to — so the two differ on that key in EVERY package that
+  depends on a sibling. `contractMoved` was therefore true almost everywhere, handing a local tarball
+  to nearly every sibling and undoing the narrowness the comparison exists to keep. Measured on the
+  `usetheokit/theokit` workspace, where three packages were substituted with no contract having moved.
+
+  A local protocol (`workspace:`, `link:`, `file:`, `portal:`) is a placeholder rather than a
+  contract, and whether the version it resolves to is published is already the question the
+  unpublished branch answers. Those keys are skipped.
+
+  0.11.0 is published and should not be used: its substitution is broad where it was meant to be
+  narrow. The failure it causes is a weaker check, never a false block.
 ## [0.11.0] - 2026-09-07
 
 ### Fixed

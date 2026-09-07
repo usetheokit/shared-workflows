@@ -333,7 +333,16 @@ function contractMoved(local, publishedManifest) {
 
 function sameRanges(a = {}, b = {}) {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  for (const k of keys) if (a[k] !== b[k]) return false;
+  for (const k of keys) {
+    // A local protocol is a PLACEHOLDER, not a contract. `pnpm pack` rewrites `workspace:^` to the
+    // version it resolves to, so the workspace manifest and the published one differ on that key in
+    // every package that depends on a sibling. Comparing them raw made `contractMoved` true almost
+    // everywhere, which hands a local tarball to almost everything and undoes the narrowness this
+    // comparison exists to keep. Whether the resolved version is published is already the question
+    // the branch above answers.
+    if (LOCAL_PROTOCOL.test(a[k] ?? "") || LOCAL_PROTOCOL.test(b[k] ?? "")) continue;
+    if (a[k] !== b[k]) return false;
+  }
   return true;
 }
 
