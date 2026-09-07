@@ -34,6 +34,19 @@ export async function latestVersion(name) {
   return doc?.["dist-tags"]?.latest ?? null;
 }
 
+/**
+ * The manifest the registry SERVES for one exact version, or null when it serves none.
+ *
+ * A version number is not a contract: the registry can hold `0.8.0` while the workspace is about to
+ * republish a different `0.8.0` with a widened peer range, because changesets moves the version at
+ * version time and not at pull-request time. Reading the served manifest is what lets the install
+ * leg tell those two apart (usetheokit/theokit#659).
+ */
+export async function publishedManifest(name, version) {
+  const doc = await packument(name);
+  return doc?.versions?.[version] ?? null;
+}
+
 /** Every published version, in registry order. */
 export async function publishedVersions(name) {
   const doc = await packument(name);

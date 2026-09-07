@@ -23,7 +23,7 @@
 import { parseArgs } from "node:util";
 import { ceilingDrift, consumersLeftBehind, floorsInOwnWorkspace, groupUntestedFloors, installedDrift, isSibling, peerInstallSpecs, pinnableSiblings, rangeFloor, sharedFloor, unpublishedSiblings, unpublishedWorkspaceVersions, untestedFloors } from "./src/checks.mjs";
 import { findPublishablePackages, resolveInstalledVersion, siblingReferences } from "./src/ecosystem.mjs";
-import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedVersions } from "./src/registry.mjs";
+import { consumersOf, discoverEcosystemPackages, latestVersion, packument, publishedManifest, publishedVersions } from "./src/registry.mjs";
 import { batchedWithDeps, detectBuildScript, detectPackageManager, pinOverrides } from "./src/package-manager.mjs";
 import { installFromTarball } from "./src/tarball.mjs";
 
@@ -222,12 +222,23 @@ async function commandInstall(root) {
     dir: p.dir,
     // Carried so the substitution can follow a substituted tarball's own unpublished asks.
     references: siblingReferences(p.manifest, isSibling),
+    // Carried so the substitution can compare the contract this workspace declares against the one
+    // the registry serves at the same version number (usetheokit/theokit#659).
+    manifest: p.manifest,
   }));
   const substitutions = [];
   // Built once for every workspace package, not per reference: the substitution walks
   // transitively, so it needs an answer for siblings the package under test never names.
   const published = {};
   for (const p of workspace) published[p.name] = await publishedVersions(p.name);
+  // What the registry serves AT the workspace's own version, so a contract that moved without the
+  // version moving is visible. Only that one version is fetched: it is the only one the substitution
+  // decision compares against (usetheokit/theokit#659).
+  const manifests = {};
+  for (const p of workspace) {
+    const served = await publishedManifest(p.name, p.version);
+    if (served) manifests[p.name] = { [p.version]: served };
+  }
   // What the registry SERVES, as opposed to everything it holds. `peerInstallSpecs` asks whether
   // that version satisfies a declared range, which is the only way to tell a real prerelease floor
   // (`>=4.63.4-next.0`, latest does not satisfy) from a prerelease SENTINEL (`>=0.1.0-alpha.0`,
@@ -238,7 +249,7 @@ async function commandInstall(root) {
     const refs = siblingReferences(pkg.manifest, isSibling);
     // What the registry cannot answer yet, taken from the workspace instead. Only the gap —
     // see `unpublishedSiblings`.
-    const localSiblings = unpublishedSiblings({ references: refs, workspace, published });
+    const localSiblings = unpublishedSiblings({ references: refs, workspace, published, manifests });
     // Computed AFTER the substitution and from it: a peer this cut is about to publish must not
     // also be asked for as `@latest`, or the registry copy overrides the packed one on the same
     // command line — see `peerInstallSpecs`.
@@ -265,7 +276,11 @@ async function commandInstall(root) {
   // consumer can install today — and a reader deciding what a green D means has to know which
   // one they got. Same reason `untestedFloors` prints (#6).
   for (const s of substitutions) {
-    console.log(`  note: ${s.pkg} was installed against ${s.name}@${s.version} packed from this workspace — the registry does not have that version yet, so this cut is testing what it is about to publish`);
+    const why =
+      s.reason === 'contract-moved'
+        ? 'the registry serves that version with different dependency ranges, so this cut is testing the pair it is about to publish rather than one publication never produces'
+        : 'the registry does not have that version yet, so this cut is testing what it is about to publish';
+    console.log(`  note: ${s.pkg} was installed against ${s.name}@${s.version} packed from this workspace — ${why}`);
   }
   return findings.length === 0 ? 0 : 1;
 }

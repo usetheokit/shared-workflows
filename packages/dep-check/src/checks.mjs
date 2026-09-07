@@ -314,7 +314,30 @@ export function peerInstallSpecs({ references, localSiblings = [], latest = new 
   return [...specs];
 }
 
-export function unpublishedSiblings({ references, workspace, published }) {
+/** The fields a consumer's installer resolves. `devDependencies` never reaches a consumer's tree. */
+const INSTALLED_FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"];
+
+/**
+ * Does the workspace copy declare a different installed contract than the registry serves at the
+ * SAME version number?
+ *
+ * Absent evidence answers NO, deliberately. A registry that did not return a manifest, or a caller
+ * that passed none, must not read as "the contract changed" — that would hand a local tarball to
+ * every sibling and stop the check testing what a consumer actually resolves, which is the reason
+ * the version skip exists (usetheokit/theokit#659).
+ */
+function contractMoved(local, publishedManifest) {
+  if (!publishedManifest || !local.manifest) return false;
+  return INSTALLED_FIELDS.some((field) => !sameRanges(local.manifest[field], publishedManifest[field]));
+}
+
+function sameRanges(a = {}, b = {}) {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) if (a[k] !== b[k]) return false;
+  return true;
+}
+
+export function unpublishedSiblings({ references, workspace, published, manifests = {} }) {
   const byName = new Map(workspace.map((p) => [p.name, p]));
   const out = [];
   const seen = new Set();
@@ -333,8 +356,22 @@ export function unpublishedSiblings({ references, workspace, published }) {
     // Missing is not empty: an unreachable registry must not read as "nothing is published",
     // or every sibling gets a local tarball and the check tests nothing real.
     if (!Array.isArray(versions) || !versions.length) continue;
-    if (versions.includes(local.version)) continue;
-    out.push({ name: dep, version: local.version, dir: local.dir });
+    // "The registry has this version number" is a DIFFERENT question from "the registry has the
+    // copy this workspace is about to publish". A release that changes a dependency contract across
+    // two workspace packages moves the contract without moving the version, because changesets bumps
+    // at version time and not at pull-request time. Skipping on the number alone installed tomorrow's
+    // package against yesterday's sibling and reported a duplicate peer — a pair publication never
+    // produces, and one no ordering of the old design could avoid (usetheokit/theokit#659).
+    if (versions.includes(local.version) && !contractMoved(local, manifests[dep]?.[local.version])) continue;
+    out.push({
+      name: dep,
+      version: local.version,
+      dir: local.dir,
+      // Which of the two gaps this substitution fills. The report explains itself with this,
+      // and "the registry does not have that version" is FALSE for a contract that moved
+      // without the version moving (usetheokit/theokit#659).
+      reason: versions.includes(local.version) ? 'contract-moved' : 'unpublished',
+    });
     for (const r of local.references ?? []) queue.push(r.dep);
   }
   return out;
