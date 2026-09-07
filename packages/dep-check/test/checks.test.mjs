@@ -247,6 +247,7 @@ describe("unpublishedSiblings — what check D cannot get from the registry yet"
     const out = unpublishedSiblings({ references: [{ dep: "@theokit/agents" }], workspace, published });
     expect(out.map((s) => s.name)).toEqual(["@theokit/agents"]);
     expect(out[0].version).toBe("12.1.0");
+    expect(out[0].reason).toBe("unpublished");
   });
 
   it("test_leaves_a_sibling_the_registry_already_has_to_be_installed_from_the_registry", () => {
@@ -259,6 +260,48 @@ describe("unpublishedSiblings — what check D cannot get from the registry yet"
     // A genuinely missing dependency must still fail the install. That is the case check D
     // exists to catch, and it is indistinguishable from outside if this swallows it.
     expect(unpublishedSiblings({ references: [{ dep: "@theokit/nowhere" }], workspace, published })).toEqual([]);
+  });
+
+  it("test_substitutes_a_published_version_whose_local_contract_no_longer_matches", () => {
+    // usetheokit/theokit#659. The skip above asks "is this version number published?", which is a
+    // different question from "is the published copy the one this workspace is about to publish?".
+    // A release that widens a peer range across two workspace packages moves the CONTRACT without
+    // moving the version number — changesets bumps at version time, not at pull-request time. So the
+    // gate installed tomorrow's package against yesterday's sibling and reported two copies of a
+    // peer, a pair publication never produces. Measured on usetheokit/theokit#658, which it blocked.
+    const ws = [
+      {
+        name: "@theokit/presenter",
+        version: "0.8.0",
+        dir: "/w/packages/presenter",
+        manifest: { peerDependencies: { "@theokit/sdk": "^4.49.0 || ^5.0.0" } },
+      },
+    ];
+    const pub = { "@theokit/presenter": ["0.7.0", "0.8.0"] };
+    const manifests = { "@theokit/presenter": { "0.8.0": { peerDependencies: { "@theokit/sdk": "^4.49.0" } } } };
+    const out = unpublishedSiblings({ references: [{ dep: "@theokit/presenter" }], workspace: ws, published: pub, manifests });
+    expect(out.map((s) => s.name)).toEqual(["@theokit/presenter"]);
+    // The report explains every substitution, and the older explanation — "the registry does not
+    // have that version yet" — is FALSE here: it has it, with a different contract. A note that
+    // names the wrong reason is worse than none, because it is read and believed.
+    expect(out[0].reason).toBe("contract-moved");
+  });
+
+  it("test_leaves_a_published_version_alone_when_the_local_contract_is_identical", () => {
+    // The narrowness is the point (#659). Substituting whenever a package is in the workspace would
+    // stop testing what a consumer resolves — the reason the skip exists at all. Only a contract
+    // that DIFFERS earns the local tarball.
+    const ws = [
+      {
+        name: "@theokit/presenter",
+        version: "0.8.0",
+        dir: "/w/packages/presenter",
+        manifest: { peerDependencies: { "@theokit/sdk": "^4.49.0" }, dependencies: {} },
+      },
+    ];
+    const pub = { "@theokit/presenter": ["0.8.0"] };
+    const manifests = { "@theokit/presenter": { "0.8.0": { peerDependencies: { "@theokit/sdk": "^4.49.0" } } } };
+    expect(unpublishedSiblings({ references: [{ dep: "@theokit/presenter" }], workspace: ws, published: pub, manifests })).toEqual([]);
   });
 
   it("test_follows_a_substituted_tarballs_own_unpublished_asks", () => {

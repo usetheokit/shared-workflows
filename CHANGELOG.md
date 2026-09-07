@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+### Fixed
+
+- **The install leg substitutes a sibling whose contract moved without its version moving
+  (usetheokit/theokit#659).** Check D skipped any sibling whose version number the registry already
+  had. That answers "does this version exist?", which is a different question from "is the published
+  copy the one this workspace is about to publish?".
+
+  A release that widens a peer range across two workspace packages moves the contract and not the
+  version, because changesets bumps at version time and not at pull-request time. So the leg packed
+  tomorrow's package, resolved yesterday's sibling from npm, and reported two copies of a peer — a
+  pair publication never produces. It is a required check, so the release could not merge, and no
+  ordering of the old design avoided it: bumping first makes the packed tarball ask for a version npm
+  does not have, and the install answers ETARGET instead.
+
+  A sibling now also earns its local tarball when the registry serves its version with different
+  `dependencies`, `peerDependencies` or `optionalDependencies`. The narrowness is deliberate — an
+  identical contract is still installed from the registry, which is what makes the check test what a
+  consumer resolves. Absent evidence answers "unchanged": a registry that returns no manifest must
+  not read as "the contract moved", or every sibling gets a local tarball and the leg tests nothing.
+
+  Each substitution now says WHICH gap it filled. The single note claimed the registry did not have
+  the version, which is false for this case, and a note that names the wrong reason is worse than
+  none because it is read and believed.
 ### Added
 
 - **The back-merge says how long its pull request has been open (usetheokit/theokit-sdk#566).**
