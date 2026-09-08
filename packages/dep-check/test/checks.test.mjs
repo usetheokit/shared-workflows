@@ -527,6 +527,82 @@ describe("peerInstallSpecs — what check D may ask the registry for alongside t
   // path it did not cover.
   const localSiblings = [{ name: "theokit", version: "0.64.0", dir: "/w/packages/theo" }];
 
+  it("test_an_alternation_asks_for_the_highest_the_range_admits_not_the_dist_tag", () => {
+    // usetheokit/shared-workflows#62. A range that admits two majors is what a workspace declares
+    // WHILE it migrates, and `latest` sits on the OLD one for as long as the migration lasts:
+    //
+    //   @theokit/sdk   latest = 4.63.5      range = ^4.52.1 || ^5.0.0      5.3.3 also published
+    //
+    // `latest` satisfies the range — through its FIRST clause — so the old rule asked for
+    // `@theokit/sdk@latest` and got 4.x, while the packed tarball's own tree resolved 5.3.3. Two
+    // copies, reported against an artefact that has one. Measured on usetheokit/theokit#683, where
+    // it blocked a release; the condition appeared when 4.63.5 was published 33 minutes before the
+    // run, so the verdict depended on WHEN the gate ran rather than on what the repository declares.
+    //
+    // A consumer resolving that range gets the highest version it admits, not the dist-tag. Asking
+    // for what the consumer would get is the question this check exists to answer.
+    const refs = [
+      { dep: "@theokit/sdk", field: "peerDependencies", range: "^4.52.1 || ^5.0.0" },
+    ];
+    const out = peerInstallSpecs({
+      references: refs,
+      localSiblings: [],
+      latest: new Map([["@theokit/sdk", "4.63.5"]]),
+      published: { "@theokit/sdk": ["4.52.1", "4.63.5", "5.0.0", "5.3.3"] },
+    });
+    expect(out).toEqual(["@theokit/sdk@5.3.3"]);
+  });
+
+  it("test_without_a_version_list_it_falls_back_to_the_dist_tag", () => {
+    // The state the PRODUCTION path was in, and the reason the three cases above passed while the
+    // real gate went on failing: `index.mjs` built `published` and `latest` from the WORKSPACE
+    // members only, so `@theokit/sdk` — an ecosystem sibling published from another repository —
+    // had no entry, and this fallback ran for the one dependency whose dist-tag was wrong.
+    //
+    // The fallback itself is correct: absent evidence must not become an invented pin. What was
+    // wrong was the caller never gathering the evidence. Asserted here so a future refactor that
+    // drops the wiring shows up as a behaviour somebody chose rather than a silent regression.
+    const refs = [
+      { dep: "@theokit/sdk", field: "peerDependencies", range: "^4.52.1 || ^5.0.0" },
+    ];
+    const out = peerInstallSpecs({
+      references: refs,
+      localSiblings: [],
+      latest: new Map([["@theokit/sdk", "4.63.5"]]),
+      published: {},
+    });
+    expect(out).toEqual(["@theokit/sdk@latest"]);
+  });
+
+  it("test_a_sentinel_floor_still_resolves_to_the_highest_published", () => {
+    // The shape theokit#626 recorded: `>=0.1.0-alpha.0` is the idiom for "anything at or above
+    // 0.1.0, prereleases included", and 0.1.0-alpha.0 was never published. Asking for the floor
+    // installs `undefined`. Highest-satisfying answers it without needing to recognise the idiom.
+    const refs = [{ dep: "@theokit/x", field: "peerDependencies", range: ">=0.1.0-alpha.0" }];
+    const out = peerInstallSpecs({
+      references: refs,
+      localSiblings: [],
+      latest: new Map([["@theokit/x", "2.0.0"]]),
+      published: { "@theokit/x": ["1.0.0", "2.0.0"] },
+    });
+    expect(out).toEqual(["@theokit/x@2.0.0"]);
+  });
+
+  it("test_a_prerelease_floor_above_latest_resolves_to_the_prerelease", () => {
+    // The shape theokit-sdk#510 recorded: after `changeset version` in prerelease mode a package
+    // declares the peer it was built against, and `latest` does not satisfy it. The old rule fell
+    // back to the range's floor; the highest SATISFYING published version is the same answer when
+    // the floor is all there is, and a better one when the line moved on.
+    const refs = [{ dep: "@theokit/y", field: "peerDependencies", range: ">=4.63.4-next.0" }];
+    const out = peerInstallSpecs({
+      references: refs,
+      localSiblings: [],
+      latest: new Map([["@theokit/y", "4.63.3"]]),
+      published: { "@theokit/y": ["4.63.3", "4.63.4-next.0", "4.63.4-next.1"] },
+    });
+    expect(out).toEqual(["@theokit/y@4.63.4-next.1"]);
+  });
+
   it("test_asks_for_latest_when_the_registry_can_answer", () => {
     const refs = [{ dep: "@theokit/sdk", field: "peerDependencies", range: ">=4.0.0" }];
     expect(peerInstallSpecs({ references: refs, localSiblings: [] })).toEqual(["@theokit/sdk@latest"]);

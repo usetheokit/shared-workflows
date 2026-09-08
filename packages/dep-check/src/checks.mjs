@@ -273,7 +273,12 @@ export function groupUntestedFloors(untested) {
  * registry can serve keeps its `@latest`, because the point of the leg is to install what a
  * consumer would get.
  */
-export function peerInstallSpecs({ references, localSiblings = [], latest = new Map() }) {
+export function peerInstallSpecs({
+  references,
+  localSiblings = [],
+  latest = new Map(),
+  published = {},
+}) {
   const packed = new Set(localSiblings.map((s) => s.name));
   const specs = new Set();
   for (const r of references) {
@@ -281,27 +286,42 @@ export function peerInstallSpecs({ references, localSiblings = [], latest = new 
     if (LOCAL_PROTOCOL.test(r.range ?? "")) continue;
     if (packed.has(r.dep)) continue;
 
-    // Ask for `@latest` when `latest` SATISFIES the declared range, and for the range's floor only
-    // when it does not. That is the question this check asks — can a consumer install this package
-    // beside the sibling the registry serves — so it is the one worth answering directly.
+    // Ask for the HIGHEST published version the declared range admits — which is what a consumer's
+    // resolver picks, and this check exists to ask what a consumer gets.
     //
-    // Two shapes make the naive answers wrong, and each broke a release here:
+    // It used to ask for `@latest` when latest satisfied the range, and for the range's floor when
+    // it did not. Three shapes broke that, and one answer handles all three:
     //
-    //   `>=4.63.4-next.0` with latest 4.63.3   — after `changeset version` in prerelease mode a
+    //   `^4.52.1 || ^5.0.0` with latest 4.63.5 — a range admitting two majors is what a workspace
+    //     declares WHILE it migrates, and the dist-tag sits on the OLD major for the duration.
+    //     `latest` satisfies through the FIRST clause, so the gate installed 4.x beside a tarball
+    //     whose own tree resolved 5.x and reported two copies of an artefact that has one.
+    //     (usetheokit/shared-workflows#62, blocking usetheokit/theokit#683)
+    //
+    //   `>=4.63.4-next.0` with latest 4.63.3 — after `changeset version` in prerelease mode a
     //     package declares the peer it was built against, and `latest` does not satisfy it. Asking
-    //     for `@latest` makes npm answer ERESOLVE and the gate report a package nobody can install,
+    //     for `@latest` made npm answer ERESOLVE and the gate report a package nobody can install,
     //     when it is installable and was paired with the wrong sibling. (theokit-sdk#510)
     //
-    //   `>=0.1.0-alpha.0` with latest 2.0.0    — the `-alpha.0` is the idiom for "any version at or
-    //     above 0.1.0, prereleases included". It is a SENTINEL, not a release: 0.1.0-alpha.0 was
-    //     never published. Asking for it installs `undefined`. Latest satisfies this range, so
-    //     `@latest` is right — and a rule keyed on "the floor looks like a prerelease" gets it
-    //     backwards. (theokit#626)
+    //   `>=0.1.0-alpha.0` with latest 2.0.0 — the `-alpha.0` is the idiom for "anything at or above
+    //     0.1.0, prereleases included". It is a SENTINEL: 0.1.0-alpha.0 was never published, so
+    //     asking for the floor installs `undefined`. (theokit#626)
     //
-    // Satisfaction distinguishes them without needing to know which shape it is looking at.
+    // Highest-satisfying answers all three without recognising which one it is looking at, because
+    // it asks the resolver's own question instead of a proxy for it. `@latest` remains the fallback
+    // when the registry served no version list — absent evidence must not become an invented pin.
     const known = latest.get(r.dep);
     let spec = `${r.dep}@latest`;
-    if (r.range && known && !semver.satisfies(known, r.range)) {
+    const versions = published[r.dep];
+    const best =
+      r.range && Array.isArray(versions) && versions.length
+        ? semver.maxSatisfying(versions, r.range, { includePrerelease: true })
+        : null;
+    if (best) {
+      spec = `${r.dep}@${best}`;
+    } else if (r.range && known && !semver.satisfies(known, r.range)) {
+      // No version list, and the dist-tag cannot satisfy the range: the floor is the only answer
+      // left that is not a guess.
       try {
         const floor = semver.minVersion(r.range);
         if (floor) spec = `${r.dep}@${floor.version}`;

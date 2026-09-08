@@ -245,6 +245,19 @@ async function commandInstall(root) {
   // latest satisfies and the sentinel was never published).
   const latestServed = new Map();
   for (const p of workspace) latestServed.set(p.name, await latestVersion(p.name));
+
+  // Every sibling ANY workspace package references, not only the ones this repository publishes.
+  // `@theokit/sdk` is an ecosystem sibling published from another repository, so it appears in
+  // `references` and never in `workspace` — and both maps above were keyed on `workspace` alone.
+  // The result was that the sibling with the most consequential range had no version data at all,
+  // and `peerInstallSpecs` fell through to `@latest` for exactly the package where the dist-tag is
+  // wrong during a major migration (shared-workflows#62).
+  for (const p of workspace) {
+    for (const r of p.references ?? []) {
+      if (published[r.dep] === undefined) published[r.dep] = await publishedVersions(r.dep);
+      if (!latestServed.has(r.dep)) latestServed.set(r.dep, await latestVersion(r.dep));
+    }
+  }
   for (const pkg of findPublishablePackages(root)) {
     const refs = siblingReferences(pkg.manifest, isSibling);
     // What the registry cannot answer yet, taken from the workspace instead. Only the gap —
@@ -253,7 +266,14 @@ async function commandInstall(root) {
     // Computed AFTER the substitution and from it: a peer this cut is about to publish must not
     // also be asked for as `@latest`, or the registry copy overrides the packed one on the same
     // command line — see `peerInstallSpecs`.
-    const siblings = peerInstallSpecs({ references: refs, localSiblings, latest: latestServed });
+    // `published` crosses too: the spec is now the highest version the range ADMITS, not the
+    // dist-tag, and that cannot be computed from `latest` alone (shared-workflows#62).
+    const siblings = peerInstallSpecs({
+      references: refs,
+      localSiblings,
+      latest: latestServed,
+      published,
+    });
     const result = installFromTarball({ packageDir: pkg.dir, repoRoot: root, alsoInstall: siblings, localSiblings });
     for (const s of result.substituted ?? []) substitutions.push({ pkg: pkg.manifest.name, ...s });
     if (!result.installed) {
