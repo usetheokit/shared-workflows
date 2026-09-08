@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+
+## [0.12.0] - 2026-09-08
+
+### Fixed
+
+- **The install leg asks for the version a consumer would resolve, not the dist-tag
+  (usetheokit/shared-workflows#62).** `peerInstallSpecs` asked for `@latest` whenever `latest`
+  satisfied the declared range. A range admitting two majors is what a workspace declares WHILE it
+  migrates, and the dist-tag sits on the OLD major for the duration — so `^4.52.1 || ^5.0.0` with
+  `latest = 4.63.5` installed 4.x beside a tarball whose own tree resolved 5.3.3, and check D
+  reported two copies of an artefact that has one. Measured on `usetheokit/theokit#683`, where it
+  blocked a release; the condition appeared when `@theokit/sdk@4.63.5` was published 33 minutes
+  before the run, so the verdict depended on WHEN the gate ran rather than on what the repository
+  declares.
+
+  The spec is now the highest published version the range admits. That answers the two shapes the
+  previous rule was built for — a prerelease floor above `latest` (theokit-sdk#510) and a sentinel
+  floor that was never published (theokit#626) — without recognising which one it is looking at,
+  because it asks the resolver's own question instead of a proxy for it.
+
+- **Version data is gathered for every sibling REFERENCED, not only for the ones this repository
+  publishes.** `published` and `latest` were built from the workspace members alone, so
+  `@theokit/sdk` — an ecosystem sibling published from another repository — had no entry, and the
+  fallback ran for the one dependency whose dist-tag was wrong. This half is why the unit tests for
+  the fix above passed while the real gate went on failing: they were handed the data the production
+  path never gathered.
 ## [0.11.1] - 2026-09-07
 
 ### Fixed
