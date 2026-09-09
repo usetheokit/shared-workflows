@@ -63,7 +63,7 @@ concurrency: backmerge-${{ inputs.target-branch }}-${{ github.ref }}
 # It matters more here than in a caller: this file IS the shared implementation, so a permission
 # granted broadly here is granted broadly in every repository that calls it.
 permissions:
-  contents: read
+  contents: read # Read both branches to compute what the back-merge would carry.
 
 jobs:
   backmerge:
@@ -71,8 +71,8 @@ jobs:
     # Declared where it is used rather than inherited. The step below opens the back-merge pull
     # request through `gh`, and that is the only write this workflow performs.
     permissions:
-      contents: read
-      pull-requests: write
+      contents: read # Read both branches to compute what the back-merge would carry.
+      pull-requests: write # Open the back-merge pull request. The only write this workflow performs.
     runs-on: ubuntu-latest
     # Two git counts and at most one `gh pr create`. A tight ceiling turns a hang into a fast,
     # obvious failure instead of a runner held for GitHub's six-hour default.
