@@ -93,13 +93,13 @@ jobs:
 
       - name: Run the action against the fixture
         id: setup
-        # zizmor: ignore[self-repository] -- `$/` is the better form and GitHub shipped it on
+        # `$/` is the better form and GitHub shipped it on
         # 2026-07-30, but NO actionlint release parses it: the latest is v1.7.12 from 2026-03-30,
         # four months earlier, and it rejects `$/...` as "invalid format because ref is missing".
         # actionlint is a REQUIRED check here (`lint / actionlint + zizmor`), so adopting the
         # better syntax today trades a low-severity advisory for a hard gate failure. Revisit when
         # actionlint ships support; the migration is one regex.
-        uses: ./actions/setup
+        uses: ./actions/setup # zizmor: ignore[self-repository]
         with:
           node-version: ${{ matrix.node }}
           working-directory: fixtures/pnpm-repo
@@ -164,13 +164,13 @@ jobs:
           node-version: '22.12'
 
       - name: The default lands inside the window
-        # zizmor: ignore[self-repository] -- `$/` is the better form and GitHub shipped it on
+        # `$/` is the better form and GitHub shipped it on
         # 2026-07-30, but NO actionlint release parses it: the latest is v1.7.12 from 2026-03-30,
         # four months earlier, and it rejects `$/...` as "invalid format because ref is missing".
         # actionlint is a REQUIRED check here (`lint / actionlint + zizmor`), so adopting the
         # better syntax today trades a low-severity advisory for a hard gate failure. Revisit when
         # actionlint ships support; the migration is one regex.
-        uses: ./actions/npm-oidc
+        uses: ./actions/npm-oidc # zizmor: ignore[self-repository]
 
       - name: And it is the version the release workflows pin
         shell: bash
@@ -216,24 +216,24 @@ jobs:
 
       # Through the action, the way a caller uses it.
       - name: It accepts a set of successes
-        # zizmor: ignore[self-repository] -- `$/` is the better form and GitHub shipped it on
+        # `$/` is the better form and GitHub shipped it on
         # 2026-07-30, but NO actionlint release parses it: the latest is v1.7.12 from 2026-03-30,
         # four months earlier, and it rejects `$/...` as "invalid format because ref is missing".
         # actionlint is a REQUIRED check here (`lint / actionlint + zizmor`), so adopting the
         # better syntax today trades a low-severity advisory for a hard gate failure. Revisit when
         # actionlint ships support; the migration is one regex.
-        uses: ./actions/checks-pass
+        uses: ./actions/checks-pass # zizmor: ignore[self-repository]
         with:
           needs: '{"verify":{"result":"success"},"sonar":{"result":"success"}}'
 
       - name: It accepts a skip that was declared
-        # zizmor: ignore[self-repository] -- `$/` is the better form and GitHub shipped it on
+        # `$/` is the better form and GitHub shipped it on
         # 2026-07-30, but NO actionlint release parses it: the latest is v1.7.12 from 2026-03-30,
         # four months earlier, and it rejects `$/...` as "invalid format because ref is missing".
         # actionlint is a REQUIRED check here (`lint / actionlint + zizmor`), so adopting the
         # better syntax today trades a low-severity advisory for a hard gate failure. Revisit when
         # actionlint ships support; the migration is one regex.
-        uses: ./actions/checks-pass
+        uses: ./actions/checks-pass # zizmor: ignore[self-repository]
         with:
           needs: '{"verify":{"result":"success"},"optional":{"result":"skipped"}}'
           allowed-skips: optional
@@ -282,13 +282,13 @@ jobs:
 
       # Through the action, against this repository's own two packages.
       - name: It accepts this repository
-        # zizmor: ignore[self-repository] -- `$/` is the better form and GitHub shipped it on
+        # `$/` is the better form and GitHub shipped it on
         # 2026-07-30, but NO actionlint release parses it: the latest is v1.7.12 from 2026-03-30,
         # four months earlier, and it rejects `$/...` as "invalid format because ref is missing".
         # actionlint is a REQUIRED check here (`lint / actionlint + zizmor`), so adopting the
         # better syntax today trades a low-severity advisory for a hard gate failure. Revisit when
         # actionlint ships support; the migration is one regex.
-        uses: ./actions/manifest-check
+        uses: ./actions/manifest-check # zizmor: ignore[self-repository]
 
       # A guard is only a guard if something has watched it refuse. Each rule is fed a
       # manifest that breaks exactly that rule, in a subshell so a correct refusal does not
