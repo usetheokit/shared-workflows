@@ -21,7 +21,7 @@ on:
         default: true
 
 permissions:
-  contents: read  # Read the tree; the publishing job below declares its own wider scope.
+  contents: read # Read the tree; the publishing job below declares its own wider scope.
 
 jobs:
   # A tag can be cut from any commit, including one that never passed CI. Re-running the gates
@@ -95,7 +95,7 @@ jobs:
     timeout-minutes: 15
     environment: npm
     permissions:
-      contents: read  # Read the tree; the publishing job below declares its own wider scope.
+      contents: read # Read the tree; the publishing job below declares its own wider scope.
       id-token: write # npm provenance — see the publish step
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -166,7 +166,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: write  # Commit the version bump and push the tag.
+      contents: write # Commit the version bump and push the tag.
     steps:
       - name: The registry must already serve this version
         # Verified from OUTSIDE the thing being verified: the publish step's exit code says the
