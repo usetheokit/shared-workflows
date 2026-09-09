@@ -1,0 +1,14 @@
+# zizmor per-rule ignores. Each entry names WHY, because an ignore whose reason is not
+# written down is indistinguishable from one nobody re-examined.
+rules:
+  use-trusted-publishing:
+    ignore:
+      # `pkg-pr-new publish` is not an npm publish. pkg.pr.new is a preview service: it never
+      # touches registry.npmjs.org, burns no version, and uses no npm credential, so there is
+      # no authentication for trusted publishing to replace. Where this repository actually
+      # publishes, it already uses OIDC -- see actions/npm-oidc and release.yml.
+      #
+      # Configured here rather than inline because the finding is reported inside a `run:`
+      # block, where `#` is part of the shell script and not a YAML comment, so zizmor cannot
+      # read a directive at the position it reports.
+      - preview.yml
