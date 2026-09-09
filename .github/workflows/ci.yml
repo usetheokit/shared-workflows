@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read  # Read the tree under test. Jobs that need more declare it themselves.
+  contents: read # Read the tree under test. Jobs that need more declare it themselves.
 
 concurrency:
   group: ci-${{ github.ref }}
