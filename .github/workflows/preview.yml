@@ -1,4 +1,4 @@
-name: Preview releases
+name: Preview releases # zizmor: ignore[use-trusted-publishing] -- pkg.pr.new is not npm: no registry, no version burned, no credential to replace.
 
 # Reusable per-commit package previews via pkg.pr.new, for the Theokit ecosystem.
 #
@@ -69,7 +69,7 @@ on:
       publish-command:
         description: >-
           Publishes the previews. `$DIRS` holds the derived package directories, space separated.
-          Leave empty to run `pnpm dlx pkg-pr-new@<version>`. Pass `pnpm exec pkg-pr-new publish # zizmor: ignore[use-trusted-publishing]
+          Leave empty to run `pnpm dlx pkg-pr-new@<version>`. Pass `pnpm exec pkg-pr-new publish
           $DIRS` in a repository that carries the tool in its own lockfile — resolving it from
           there is the tool's own CI guidance, and it is stricter than a pinned dlx.
         type: string
@@ -336,8 +336,8 @@ jobs:
             # Pinned rather than floating, so a preview cannot silently change tool version
             # between commits.
             if [ -f pnpm-lock.yaml ]; then
-              pnpm dlx "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}" # zizmor: ignore[use-trusted-publishing]
+              pnpm dlx "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}"
             else
-              npx --yes "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}" # zizmor: ignore[use-trusted-publishing]
+              npx --yes "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}"
             fi
           fi
