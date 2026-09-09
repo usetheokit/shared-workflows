@@ -69,7 +69,7 @@ on:
       publish-command:
         description: >-
           Publishes the previews. `$DIRS` holds the derived package directories, space separated.
-          Leave empty to run `pnpm dlx pkg-pr-new@<version>`. Pass `pnpm exec pkg-pr-new publish
+          Leave empty to run `pnpm dlx pkg-pr-new@<version>`. Pass `pnpm exec pkg-pr-new publish # zizmor: ignore[use-trusted-publishing]
           $DIRS` in a repository that carries the tool in its own lockfile — resolving it from
           there is the tool's own CI guidance, and it is stricter than a pinned dlx.
         type: string
@@ -336,8 +336,8 @@ jobs:
             # Pinned rather than floating, so a preview cannot silently change tool version
             # between commits.
             if [ -f pnpm-lock.yaml ]; then
-              pnpm dlx "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}"
+              pnpm dlx "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}" # zizmor: ignore[use-trusted-publishing]
             else
-              npx --yes "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}"
+              npx --yes "pkg-pr-new@${PKG_PR_NEW_VERSION}" publish "${dirs[@]}" # zizmor: ignore[use-trusted-publishing]
             fi
           fi
