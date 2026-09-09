@@ -372,6 +372,12 @@ jobs:
           echo "$count extra run(s) needed"
 
       - name: What this run actually checked
+        env:
+          # Through `env:` rather than interpolated into the script, so the shell receives a
+          # VARIABLE instead of a value pasted into its source. This one is a count the workflow
+          # computed itself, so nothing was injectable -- it is the uniform habit, and it leaves
+          # nothing to suppress.
+          PLANNED_COUNT: ${{ steps.plan.outputs.count }}
         # #27 — an empty matrix has two causes that look identical from outside: nothing to check,
         # and could not check. The second one is the Version PR case, where the reinstall would ask
         # the registry for a version this pull request exists to publish. Both skip the legs; only
@@ -392,7 +398,7 @@ jobs:
               echo ">"
               echo "> A green run here means the legs did not execute, not that the floors install."
             else
-              echo "${{ steps.plan.outputs.count }} extra run(s) planned."
+              echo "$PLANNED_COUNT extra run(s) planned."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

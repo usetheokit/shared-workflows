@@ -33,9 +33,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read # Read the manifests the report is built from.
-      # Writing the finding into an issue IS the output of this job. Nothing else here
-      # needs a token.
-      issues: write
+      issues: write # Writing the finding into an issue IS this job's output.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

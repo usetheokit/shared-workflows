@@ -1,4 +1,4 @@
-name: Preview releases
+name: Preview releases # zizmor: ignore[use-trusted-publishing] -- pkg.pr.new is not npm: no registry, no version burned, no credential to replace.
 
 # Reusable per-commit package previews via pkg.pr.new, for the Theokit ecosystem.
 #
