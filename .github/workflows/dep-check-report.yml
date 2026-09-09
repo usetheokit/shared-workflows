@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read  # Read the manifests the report is built from.
+  contents: read # Read the manifests the report is built from.
 
 concurrency:
   group: dep-check-report
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: read  # Read the manifests the report is built from.
+      contents: read # Read the manifests the report is built from.
       # Writing the finding into an issue IS the output of this job. Nothing else here
       # needs a token.
       issues: write
