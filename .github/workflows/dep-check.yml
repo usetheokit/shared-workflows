@@ -154,6 +154,12 @@ jobs:
         run: npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" install --root repo
 
       - name: What this run actually checked
+        env:
+          # Through `env:` rather than interpolated into the script, so the shell receives a
+          # VARIABLE instead of a value pasted into its source. This one is a count this
+          # workflow computed itself, so nothing was injectable -- it is the uniform habit,
+          # and it leaves nothing to suppress.
+          PLANNED_COUNT: ${{ steps.plan.outputs.count }}
         # A job that reports `success` with its expensive leg SKIPPED is indistinguishable, from
         # outside, from a job that ran the leg and passed. Measured on theokit-sdk: step D had run
         # twice and failed twice, and every other run was green — because the leg never executed.
@@ -392,7 +398,7 @@ jobs:
               echo ">"
               echo "> A green run here means the legs did not execute, not that the floors install."
             else
-              echo "${{ steps.plan.outputs.count }} extra run(s) planned."
+              echo "$PLANNED_COUNT extra run(s) planned."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
