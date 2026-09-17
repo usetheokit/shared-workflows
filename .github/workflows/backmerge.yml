@@ -93,12 +93,51 @@ jobs:
         run: |
           set -euo pipefail
 
-          behind="$(git rev-list --count "origin/${TARGET}..origin/main")"
-          echo "${TARGET} is ${behind} commit(s) behind main"
+          # usetheokit/theokit#774 — does `main` carry anything the target lacks? A THREE-DOT diff, not
+          # a commit count.
+          #
+          # This counted commits, and a commit count answers a different question than the one this
+          # job asks. Every promotion through `workspace -> develop -> main` leaves merge commits on
+          # `main` that exist on no other branch, so the count is permanently above zero while the
+          # content is identical. Measured on usetheokit/theokit 2026-09-17: seven commits behind,
+          # ZERO non-merge commits, and an empty three-dot diff — with every package version equal
+          # across the three branches.
+          #
+          # What that cost: a back-merge pull request carrying zero files (#817), a stale-warning
+          # that can fire on a request which can never be non-empty, and — the expensive part — a
+          # real drift that would look exactly like this noise.
+          #
+          # THREE-DOT rather than `--no-merges`, which also gives zero here. `--no-merges` misses a
+          # merge commit that resolved a conflict, since that content exists in no ordinary commit.
+          # `A...B` is "what B introduced since the merge base", which is the question in one
+          # expression and is right in both cases.
+          if git diff --quiet "origin/${TARGET}...origin/main"; then
+            behind=0
+          else
+            behind="$(git rev-list --count "origin/${TARGET}..origin/main")"
+          fi
+          echo "${TARGET}: main introduced $( [ "${behind}" -eq 0 ] && echo nothing || echo "content across ${behind} commit(s)" )"
 
           # The steady state. Saying so explicitly keeps a green run from being read as "the job
           # did not run" — a distinction this ecosystem keeps paying for elsewhere.
           if [ "${behind}" -eq 0 ]; then
+            # The steady state — and the one case where an OPEN pull request is evidence of a problem
+            # rather than of pending work. With nothing introduced, any open request is empty by
+            # definition: its commits reached the target by another route, and what is left is a row
+            # in the list that reads exactly like drift. #817 was read that way.
+            #
+            # CLOSED rather than warned about, unlike the stale case below. A stale request still
+            # carries commits somebody must land, so a human decides; an empty one carries nothing,
+            # and the only decision left is to stop it claiming otherwise.
+            empty="$(gh pr list --base "${TARGET}" --head main --state open --json number \
+              --jq '.[0].number // empty')"
+            if [ -n "${empty}" ]; then
+              gh pr close "${empty}" --comment "Closed by the back-merge job: \`main\` has introduced nothing \`${TARGET}\` lacks, so this pull request carries no files. Its commits reached \`${TARGET}\` by another route. A new one opens automatically the next time there is something to bring."
+              echo "✓ closed empty PR #${empty}"
+              exit 0
+            fi
+            # Saying so explicitly keeps a green run from being read as "the job did not run" — a
+            # distinction this ecosystem keeps paying for elsewhere.
             echo "✓ nothing to back-merge"
             exit 0
           fi

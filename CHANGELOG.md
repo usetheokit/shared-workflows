@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Back-merge asks whether `main` introduced anything, not how many commits it has
+  (usetheokit/theokit#774).** It counted commits, and every promotion through
+  `workspace -> develop -> main` leaves merge commits on `main` that exist on no other branch — so
+  the count stayed above zero while the content was identical. Measured on `usetheokit/theokit`:
+  seven commits behind, zero non-merge commits, an empty three-dot diff, and every package version
+  equal across the three branches. The cost was a back-merge pull request carrying zero files, a
+  stale-warning able to fire on a request that can never be non-empty, and a real drift that would
+  have looked exactly like the noise. It now asks `git diff --quiet A...B` — what `main` introduced
+  since the merge base — which is also right for a merge commit that resolved a conflict, where
+  `--no-merges` would have missed the content.
+- **An empty back-merge pull request is closed instead of left open.** With nothing introduced, an
+  open request is empty by definition: its commits arrived by another route, and the row it leaves
+  reads exactly like drift. Closed rather than warned about, unlike a stale one — a stale request
+  still carries commits somebody must land, so a human decides; an empty one carries nothing.
+
 
 
 ## [0.12.0] - 2026-09-08
