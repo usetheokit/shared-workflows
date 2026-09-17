@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The setup action installs Node before it installs pnpm, so it provides a toolchain instead of
+  requiring one (usetheokit/website#24).** `pnpm/action-setup` installs pnpm by shelling out to
+  `npm ci`, and whichever npm that resolution reaches is the one that runs. On a hosted runner that
+  is a working npm and the ordering never mattered; on a self-hosted runner whose bundled node ships
+  a `bin/npm` stub with no library behind it, the install died before the action had set anything
+  up. Measured on `usetheokit/website`, the only self-hosted consumer of eleven: CI red from
+  2026-09-02 to 2026-09-17, fifteen days in which the job never reached a single check about the
+  repository. `actions/setup-node` now runs first and prepends a real npm; it is called a second
+  time afterwards because the pnpm-store cache needs pnpm to already exist, and that is the only
+  reason there are two.
+- **The self-test covers a runner whose npm is broken, which it could not before.** `setup-action`
+  runs on `ubuntu-latest`, so it proved the action works exactly where the failure is impossible.
+  The first replacement removed npm from PATH and passed before the fix — the runner's own bundled
+  node has a working npm, so removing the one on PATH changes nothing. The condition is a broken
+  npm, not a missing one; the job now shadows npm with a shim that fails the same way, and asserts
+  the shim won the resolution before trusting the result.
 - **Back-merge asks whether `main` introduced anything, not how many commits it has
   (usetheokit/theokit#774).** It counted commits, and every promotion through
   `workspace -> develop -> main` leaves merge commits on `main` that exist on no other branch — so
