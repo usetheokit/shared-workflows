@@ -150,27 +150,28 @@ jobs:
           fi
           echo "no _authToken npmrc — an OIDC publish is not handed a phantom credential"
 
-  setup-action-without-npm:
-    # The property under test is the one the job above CANNOT express: that the action PROVIDES the
-    # toolchain rather than requiring one. `setup-action` runs on ubuntu-latest, where npm is already
-    # installed, so it proves the action works where the problem cannot occur.
+  setup-action-with-broken-npm:
+    # The property under test is the one `setup-action` CANNOT express: that the action provides a
+    # working npm for the pnpm installer instead of inheriting whatever the runner happens to have.
     #
-    # It occurs on a self-hosted runner. `pnpm/action-setup` writes a package.json into a scratch dir
-    # and shells out to `npm ci` to install pnpm into it — with PATH set to the job's PATH plus
-    # `dirname(process.execPath)`, which on a runner is its own bundled node. That bundled node ships
-    # a `bin/npm` stub with no `lib/cli.js` behind it. Where the job PATH has a real npm, the stub is
-    # never reached; where it does not, npm resolves to the stub and the install dies with
-    # `Cannot find module '../lib/cli.js'` before the action has set up anything.
+    # `pnpm/action-setup` installs pnpm by writing a scratch package.json and shelling out to
+    # `npm ci`, with PATH set to the job's PATH plus `dirname(process.execPath)` — the runner's own
+    # bundled node. Whichever npm that resolution reaches is the one that installs pnpm, and the
+    # action asserts nothing about it.
     #
-    # Measured on usetheokit/website, whose runner is self-hosted and the only one in this ecosystem
-    # that is: every CI run red from 2026-09-02 to 2026-09-17, fifteen days, the job dying before it
-    # checked a single thing about the repository (usetheokit/website#24).
+    # Measured on usetheokit/website, the one self-hosted runner among eleven consumers: its bundled
+    # node ships a `bin/npm` stub with no `lib/cli.js` behind it, so the install died before the
+    # action set anything up, and CI was red from 2026-09-02 to 2026-09-17 (usetheokit/website#24).
     #
-    # Removing npm from PATH reproduces that here, on a hosted runner, deterministically. The step
-    # below drops the directory npm lives in — which takes node with it, since they share one — and
-    # that is the point: the action is handed a runner with no toolchain, which is what it exists to
-    # fix.
-    name: setup action on a runner with no npm
+    #   Error: Cannot find module '../lib/cli.js'
+    #   requireStack: [ '/opt/actions-runner/externals.2.337.0/node24/bin/npm' ]
+    #
+    # THE FIRST VERSION OF THIS JOB REMOVED npm FROM PATH INSTEAD, AND PASSED BEFORE THE FIX — which
+    # is why it is not what is here. Its log is worth keeping: `removing /usr/local/bin`, then
+    # `no npm on PATH`, then `Running self-installer... added 5 packages`. A hosted runner's bundled
+    # node has a WORKING npm, so removing the one on PATH changes nothing that matters. The
+    # condition is not a missing npm — it is a broken one, and only the second reproduces it here.
+    name: setup action when the npm in scope is broken
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -178,34 +179,44 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Take node and npm off PATH, the way a bare self-hosted runner has neither
+      - name: Put a broken npm in front, the way the self-hosted runner's bundled one is broken
         shell: bash
-        # Written to GITHUB_ENV rather than GITHUB_PATH: GITHUB_PATH only PREPENDS, and this has to
-        # REMOVE. Asserting the removal worked matters as much as doing it — a filter that silently
-        # matched nothing would leave npm on PATH and the job would pass without testing anything,
-        # which is the failure mode this whole file is about.
+        # GITHUB_PATH PREPENDS, which is what this needs: the shim must win the resolution that
+        # `npm ci` performs. The fix works by prepending a real npm ahead of it, so after the fix the
+        # shim is shadowed and never runs — the same mechanism, observed from the other side.
         run: |
           set -euo pipefail
-          npm_bin="$(command -v npm)"
-          npm_dir="$(dirname "${npm_bin}")"
-          echo "removing ${npm_dir} (npm at ${npm_bin})"
-          filtered="$(printf '%s' "${PATH}" | tr ':' '\n' | grep -vFx "${npm_dir}" | paste -sd: -)"
-          test "${filtered}" != "${PATH}" || { echo "::error::PATH unchanged — the filter matched nothing, so this job would prove nothing"; exit 1; }
-          echo "PATH=${filtered}" >> "${GITHUB_ENV}"
+          shim="${RUNNER_TEMP}/broken-npm"
+          mkdir -p "${shim}"
+          # printf, not a heredoc: an indented heredoc body would put spaces before the shebang and
+          # the kernel would refuse to exec it, which fails for a reason that has nothing to do with
+          # what this job is testing.
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            "echo \"Error: Cannot find module '../lib/cli.js'\" >&2" \
+            'echo "requireStack: [ '"'"'$0'"'"' ]" >&2' \
+            'exit 1' > "${shim}/npm"
+          chmod +x "${shim}/npm"
+          head -1 "${shim}/npm"
+          echo "${shim}" >> "${GITHUB_PATH}"
 
-      - name: Confirm the runner really has no npm now
+      - name: Confirm the broken npm is the one in scope
         shell: bash
+        # Asserting the control is armed. A shim that failed to shadow the real npm would leave this
+        # job green for the wrong reason, which is precisely how the gap it replaces survived.
         run: |
           set -euo pipefail
-          ! command -v npm >/dev/null 2>&1 || { echo "::error::npm still resolves to $(command -v npm) — the precondition did not hold"; exit 1; }
-          echo "no npm on PATH — the action is on its own"
+          resolved="$(command -v npm)"
+          echo "npm resolves to ${resolved}"
+          case "${resolved}" in "${RUNNER_TEMP}/broken-npm/"*) ;; *) echo "::error::the shim did not shadow npm — this job would prove nothing"; exit 1 ;; esac
+          ! npm --version >/dev/null 2>&1 || { echo "::error::the shim is not broken"; exit 1; }
 
       - name: Run the action against the fixture
         uses: ./actions/setup
         with:
           working-directory: fixtures/pnpm-repo
 
-      - name: The action resolved the DECLARED package manager, from nothing
+      - name: The action resolved the DECLARED package manager anyway
         working-directory: fixtures/pnpm-repo
         shell: bash
         run: |
