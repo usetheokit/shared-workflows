@@ -150,6 +150,71 @@ jobs:
           fi
           echo "no _authToken npmrc — an OIDC publish is not handed a phantom credential"
 
+  setup-action-without-npm:
+    # The property under test is the one the job above CANNOT express: that the action PROVIDES the
+    # toolchain rather than requiring one. `setup-action` runs on ubuntu-latest, where npm is already
+    # installed, so it proves the action works where the problem cannot occur.
+    #
+    # It occurs on a self-hosted runner. `pnpm/action-setup` writes a package.json into a scratch dir
+    # and shells out to `npm ci` to install pnpm into it — with PATH set to the job's PATH plus
+    # `dirname(process.execPath)`, which on a runner is its own bundled node. That bundled node ships
+    # a `bin/npm` stub with no `lib/cli.js` behind it. Where the job PATH has a real npm, the stub is
+    # never reached; where it does not, npm resolves to the stub and the install dies with
+    # `Cannot find module '../lib/cli.js'` before the action has set up anything.
+    #
+    # Measured on usetheokit/website, whose runner is self-hosted and the only one in this ecosystem
+    # that is: every CI run red from 2026-09-02 to 2026-09-17, fifteen days, the job dying before it
+    # checked a single thing about the repository (usetheokit/website#24).
+    #
+    # Removing npm from PATH reproduces that here, on a hosted runner, deterministically. The step
+    # below drops the directory npm lives in — which takes node with it, since they share one — and
+    # that is the point: the action is handed a runner with no toolchain, which is what it exists to
+    # fix.
+    name: setup action on a runner with no npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Take node and npm off PATH, the way a bare self-hosted runner has neither
+        shell: bash
+        # Written to GITHUB_ENV rather than GITHUB_PATH: GITHUB_PATH only PREPENDS, and this has to
+        # REMOVE. Asserting the removal worked matters as much as doing it — a filter that silently
+        # matched nothing would leave npm on PATH and the job would pass without testing anything,
+        # which is the failure mode this whole file is about.
+        run: |
+          set -euo pipefail
+          npm_bin="$(command -v npm)"
+          npm_dir="$(dirname "${npm_bin}")"
+          echo "removing ${npm_dir} (npm at ${npm_bin})"
+          filtered="$(printf '%s' "${PATH}" | tr ':' '\n' | grep -vFx "${npm_dir}" | paste -sd: -)"
+          test "${filtered}" != "${PATH}" || { echo "::error::PATH unchanged — the filter matched nothing, so this job would prove nothing"; exit 1; }
+          echo "PATH=${filtered}" >> "${GITHUB_ENV}"
+
+      - name: Confirm the runner really has no npm now
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! command -v npm >/dev/null 2>&1 || { echo "::error::npm still resolves to $(command -v npm) — the precondition did not hold"; exit 1; }
+          echo "no npm on PATH — the action is on its own"
+
+      - name: Run the action against the fixture
+        uses: ./actions/setup
+        with:
+          working-directory: fixtures/pnpm-repo
+
+      - name: The action resolved the DECLARED package manager, from nothing
+        working-directory: fixtures/pnpm-repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          declared="$(node -p "require('./package.json').packageManager.split('+')[0].split('@')[1]")"
+          actual="$(pnpm --version)"
+          echo "declared=${declared} actual=${actual}"
+          test "${declared}" = "${actual}"
+
   npm-oidc-action:
     name: npm-oidc action
     runs-on: ubuntu-latest
