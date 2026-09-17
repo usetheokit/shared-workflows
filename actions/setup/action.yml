@@ -43,12 +43,47 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Node, before anything that needs an npm to exist
+      # FIRST, and the order is the whole point of this step. `pnpm/action-setup` below installs
+      # pnpm by writing a scratch package.json and shelling out to `npm ci` — with PATH set to the
+      # job's PATH plus `dirname(process.execPath)`, the runner's own bundled node. Whichever npm
+      # that resolution reaches is the one that installs pnpm, and nothing asserted anything about
+      # it.
+      #
+      # On a hosted runner that npm works and the ordering never mattered. On usetheokit/website —
+      # the one self-hosted runner among eleven consumers — the bundled node ships a `bin/npm` stub
+      # with no `lib/cli.js` behind it, so the install died before the action had set anything up:
+      #
+      #   Error: Cannot find module '../lib/cli.js'
+      #   requireStack: [ '/opt/actions-runner/externals.2.337.0/node24/bin/npm' ]
+      #
+      # CI there was red from 2026-09-02 to 2026-09-17 (usetheokit/website#24). An action named
+      # "setup the toolchain" was requiring a toolchain to already be there.
+      #
+      # setup-node PREPENDS its own bin directory, so after this step `npm` resolves to one this
+      # action installed rather than one it hoped to find.
+      #
+      # NO `cache:` here, deliberately — caching the pnpm store means running `pnpm store path`,
+      # and pnpm does not exist yet at this point. The cache stays on the second call below, which
+      # is why there are two.
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        node-version-file: ${{ inputs.node-version == '' && format('{0}/.nvmrc', inputs.working-directory) || '' }}
+        # DELIBERATELY NO `registry-url`. The second call carries the full reason; it applies here
+        # identically, and a reader who changes one must change both.
+
     - name: Install the package manager the repository declares
       # NO `version:` input, deliberately. pnpm/action-setup reads `packageManager` from
       # package.json when none is given, so the version lives in exactly one place. Passing it here
       # creates a second place to update and therefore a place to forget: theokit-sdk pinned
       # `corepack prepare pnpm@9.15.0` in four workflows while its manifest said 10.34.1, so every
       # gate there validated under a package manager no contributor used (usetheokit/theokit-sdk#415).
+      #
+      # `standalone: true` looks like the fix for the npm problem described above and is NOT. Read
+      # at the pinned SHA: it selects `@pnpm/exe` over `pnpm` in the scratch lockfile, and both
+      # paths run the same `npm ci`. What this needs is a working npm, which the step above now
+      # guarantees rather than hopes for.
       uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       with:
         # WHICH manifest, not which version. Without this the action reads `packageManager`
@@ -57,6 +92,16 @@ runs:
         package_json_file: ${{ inputs.working-directory }}/package.json
 
     - name: Setup Node
+      # The SECOND call to setup-node, and it is here for the CACHE rather than for Node. setup-node
+      # owns the pnpm-store cache, and wiring that requires pnpm on PATH — so it cannot be the call
+      # that precedes pnpm. Two calls is the cheapest way to have both: this one resolves the same
+      # version from the same source, hits the tool cache, and adds the store.
+      #
+      # DO NOT collapse them back into one. The single call was the bug (usetheokit/website#24), and
+      # `setup-action when the npm in scope is broken` in this repository's CI fails if it returns.
+      #
+      # The alternative was an `actions/cache` step with a hand-written key, which would mean
+      # re-deriving the rule below by hand, in a second place, where it can drift from its reason.
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ inputs.node-version }}
