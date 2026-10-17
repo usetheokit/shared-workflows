@@ -1,0 +1,32 @@
+name: Promotion gate delivery check
+description: >-
+  Fails unless every commit of a deliver/* pull request is already on workspace,
+  either as the same patch or as a `git cherry-pick -x` of a workspace commit.
+
+# Called by `.github/workflows/promotion-gate.yml` on the delivery path only, after a checkout with
+# `fetch-depth: 0`. It is an action rather than an inline step because a reusable workflow runs in
+# the caller's checkout, where this repository's files do not exist; an action is fetched from here.
+# The logic is in `check-delivery.sh` so `check-delivery.test.sh` runs the same bytes this does.
+
+inputs:
+  base-sha:
+    description: The pull request's base commit, `github.event.pull_request.base.sha`.
+    required: true
+  head-sha:
+    description: The pull request's head commit, `github.event.pull_request.head.sha`.
+    required: true
+  workspace-ref:
+    description: The ref that holds workspace in the checkout.
+    required: false
+    default: origin/workspace
+
+runs:
+  using: composite
+  steps:
+    - name: Every commit in the delivery is already on workspace
+      shell: bash
+      env:
+        BASE_SHA: ${{ inputs.base-sha }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+        WORKSPACE_REF: ${{ inputs.workspace-ref }}
+      run: bash "${GITHUB_ACTION_PATH}/check-delivery.sh"
