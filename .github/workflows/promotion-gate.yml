@@ -48,12 +48,23 @@
 # reviewed.
 #
 # WHAT WAS DELIBERATELY NOT CARRIED OVER. The `theokit-sdk` variant declared a `concurrency` group
-# with `cancel-in-progress`. This job is two string comparisons with no checkout and finishes in
-# seconds, so cancelling a superseded run reclaims a few seconds of a runner, and GitHub already
-# reports the newest run's conclusion as the check status — the stale-verdict problem the setting
-# usually solves does not arise here. It is left out rather than copied, so that nobody reads its
-# absence as an oversight. `timeout-minutes` below WAS carried over: it guards a different failure
-# (a hang holding a runner for the six-hour default), which no other mechanism covers.
+# with `cancel-in-progress`. This job is a few string comparisons (plus, since 2026-10-17, one
+# history checkout on the delivery path) and finishes in seconds, so cancelling a superseded run
+# reclaims a few seconds of a runner, and GitHub already reports the newest run's conclusion as
+# the check status, so the stale-verdict problem the setting usually solves does not arise here. It
+# is left out rather than copied, so that nobody reads its absence as an oversight.
+# `timeout-minutes` below WAS carried over: it guards a different failure (a hang holding a runner
+# for the six-hour default), which no other mechanism covers.
+#
+# PER-ITEM DELIVERY (2026-10-17, #73). Promoting `workspace` whole made delivery all or nothing: on
+# 2026-10-17 a consumer had two READY items it could not deliver because three unfinished ones sat
+# beside them on `workspace`. The squad kit now delivers one item at a time through a temporary
+# `deliver/<item>-<shortsha>` branch cut from `develop` and holding only `git cherry-pick -x` copies
+# of `workspace` commits. The gate accepts such a head from this repository after checking every
+# commit in it (`actions/promotion-gate/check-delivery.sh`): each one must be the same patch as a
+# `workspace` commit the base does not have yet, or carry a `-x` trailer naming one, and merge
+# commits are refused. The invariant is unchanged; it is now checked per commit instead of by
+# branch name. Only this path checks out history; `workspace` and the bot branch still need none.
 name: Promotion gate
 
 on:
@@ -66,12 +77,13 @@ jobs:
   head-must-be-workspace:
     name: develop accepts only workspace
     runs-on: ubuntu-latest
-    # Two string comparisons and no checkout; it has never taken more than a few seconds. A tight
-    # ceiling turns a hang into a fast, obvious failure instead of a runner held for GitHub's
-    # six-hour default.
+    # String comparisons, plus a full-history checkout on the delivery path only. A tight ceiling
+    # turns a hang into a fast, obvious failure instead of a runner held for GitHub's six-hour
+    # default.
     timeout-minutes: 5
     steps:
       - name: Refuse a head that is not workspace
+        id: head
         env:
           # Through the environment, never `${{ }}` inside `run:`. On a pull request from a fork the
           # head branch name is text the author chose, so interpolating it into the script would put
@@ -122,11 +134,43 @@ jobs:
             exit 0
           fi
 
+          # A per-item delivery: a branch cut from develop that holds cherry-picks of workspace
+          # commits. The name only routes it to the next steps, which check every commit in it; the
+          # name alone proves nothing, as the fork check above already shows for `workspace`.
+          if [[ "${HEAD_REF}" =~ ^deliver/[A-Za-z0-9._-]+$ ]]; then
+            echo "head is a delivery branch; every commit in it must already be on workspace"
+            echo "verify-delivery=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
           echo "::error::'${HEAD_REF}' cannot be merged into develop."
           echo
-          echo "rules/git-safety.md § 1: develop advances ONLY by promoting workspace, and nothing"
-          echo "other than workspace may be merged into it. Work originates on workspace; develop"
-          echo "integrates it."
+          echo "rules/git-safety.md § 1: work originates on workspace; develop integrates it. develop"
+          echo "takes workspace itself, or a deliver/<item> branch holding cherry-picks of workspace"
+          echo "commits, and nothing else."
           echo
-          echo "Land this on workspace first, then open workspace -> develop."
+          echo "Land this on workspace first, then open workspace -> develop, or deliver single"
+          echo "items through a deliver/<item> branch of 'git cherry-pick -x' copies."
           exit 1
+
+      # The delivery path needs the history the string checks above never did: which commits the
+      # pull request adds, and whether workspace holds each one. Checked out at the head SHA rather
+      # than the default merge ref, which does not exist while the pull request has a conflict.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.head.outputs.verify-delivery == 'true'
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # An action and not an inline step: this workflow runs in the CALLER's checkout, where the
+      # script does not exist. It is fetched from here at `@v1`, the same ref callers resolve this
+      # workflow at, and the CI here moves `v1` for both files in one step. That is why
+      # unpinned-uses is ignored: a SHA pin would have to name a commit that does not exist until
+      # this change lands, and would then freeze the check while the workflow keeps moving.
+      - name: Every commit in the delivery is already on workspace
+        if: steps.head.outputs.verify-delivery == 'true'
+        uses: usetheokit/shared-workflows/actions/promotion-gate@v1 # zizmor: ignore[unpinned-uses]
+        with:
+          base-sha: ${{ github.event.pull_request.base.sha }}
+          head-sha: ${{ github.event.pull_request.head.sha }}

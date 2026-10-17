@@ -429,6 +429,23 @@ jobs:
           fi
           echo "refused an empty directory — correct"
 
+  promotion-gate-action:
+    name: promotion-gate delivery check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Runs `check-delivery.sh`, the file the action runs, against throwaway repositories: plain and
+      # `-x` cherry-picks pass, a `-x` copy whose context changed passes on its trailer, and an extra
+      # commit, a merge, a trailer naming a commit develop already has, and an empty range are each
+      # refused. The cases build their own history, so the shallow checkout above is enough.
+      - name: It accepts workspace cherry-picks and refuses everything else
+        shell: bash
+        run: bash ./actions/promotion-gate/check-delivery.test.sh
+
   # `v1` is the ref every consumer resolves, and a change that does not reach it did not ship.
   #
   # The release moves it after a publish (release.yml), which covers a change that bumps the
@@ -439,7 +456,7 @@ jobs:
   # So `v1` follows `main`, with one condition.
   advance-v1:
     name: advance v1 to main
-    needs: [test, setup-action, npm-oidc-action, checks-pass-action, manifest-check-action]
+    needs: [test, setup-action, npm-oidc-action, checks-pass-action, manifest-check-action, promotion-gate-action]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5

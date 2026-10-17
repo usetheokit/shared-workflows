@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The promotion gate accepts a per-item delivery branch, after checking every commit in it
+  (#73).** It accepted only `workspace` (and the changesets bot), so `develop` could advance only by
+  taking the whole of `workspace`. On 2026-10-17 a consumer had two READY items it could not deliver
+  because three unfinished ones were on `workspace` beside them. A same-repository head matching
+  `deliver/[A-Za-z0-9._-]+` now passes when every commit in it is the same patch as a `workspace`
+  commit that `develop` does not have yet, or carries a `git cherry-pick -x` trailer naming one. A
+  merge commit, or any other commit, fails the check and is printed with its SHA and subject. Forks,
+  `workspace` and `changeset-release/develop` behave as before, and the required check keeps its
+  name, `promotion-gate / develop accepts only workspace`. The commit check lives in
+  `actions/promotion-gate` and runs only on the delivery path, after a full-history checkout.
+
 ### Fixed
 
 - **The setup action installs Node before it installs pnpm, so it provides a toolchain instead of
