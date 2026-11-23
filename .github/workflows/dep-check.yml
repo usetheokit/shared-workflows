@@ -49,6 +49,16 @@ on:
           not `test`.
         type: string
         default: ''
+      build-command:
+        description: |
+          The build the floor leg runs before the suite. Leave empty to derive it with
+          `dep-check build-command`, which runs the repository's `build` script. Set it when
+          that script also builds applications whose ranges the leg does not check: theokit's
+          `build` compiled `apps/theoclaw`, which pins `@theokit/sdk` exactly and uses APIs the
+          shared floor (`5.32.0`) lacks, so the leg failed on the application and never on a
+          range. `pnpm build:packages` there builds only what the floors are a claim about.
+        type: string
+        default: ''
       run-install-check:
         description: |
           Also pack each publishable package and install it into an empty project with npm,
@@ -255,9 +265,19 @@ jobs:
         # exist once built. Neither failure was about a range, and both read as one.
         #
         # A repository with no build script prints nothing here and the step is a no-op.
+        # zizmor: ignore[template-injection]
+        #
+        # Code by contract, like `test-command` below: only a workflow in a repository that
+        # chose to call this one can set it, never a pull request author.
+        env:
+          CALLER_BUILD: ${{ inputs.build-command }}
         run: |
           set -euo pipefail
-          cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" build-command --root repo)
+          if [ -n "${CALLER_BUILD}" ]; then
+            cmd="${CALLER_BUILD}"
+          else
+            cmd=$(npx --yes "@theokit/dep-check@${DEP_CHECK_VERSION}" build-command --root repo)
+          fi
           if [ -z "$cmd" ]; then
             echo "no build script in this repository — nothing to build"
             exit 0
